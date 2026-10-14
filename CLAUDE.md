@@ -11,7 +11,7 @@ VR mod for **Homeworld 2 Remastered** (HomeworldRM.exe, Homeworld Remastered Col
 
 ## Current status
 
-**Phase 0 (spikes) — in progress; last item is the in-game view-override test.** The proxy skeleton exists: `src/proxy` (366 forwarded exports + `wglGetProcAddress`/`wglSwapBuffers` hooks), `src/stereo/view_override` (spike: Ctrl+Shift+F9 cycles a fixed camera yaw/offset). Build + test with `tools/smoke-test.ps1` (no game needed), deploy with `tools/install.ps1` / `tools/uninstall.ps1`.
+**Phase 0 (spikes) — done, GO (2026-10-14).** Next per the tiers: Phase 1 baseline (theater mode + Frame binding), then Tier 2. The proxy skeleton exists: `src/proxy` (366 forwarded exports + `wglGetProcAddress`/`wglSwapBuffers` hooks), `src/stereo/view_override` (spike: Ctrl+Shift+F9 cycles a fixed camera yaw/offset). Build + test with `tools/smoke-test.ps1` (no game needed), deploy with `tools/install.ps1` / `tools/uninstall.ps1`.
 HWRM is **32-bit and not Large Address Aware** (2 GB) — build everything Win32 and keep the proxy lean (LAA is opt-in only, see Conventions). See `docs/FINDINGS.md`.
 
 ### Phase 0 checklist (go/no-go)
@@ -19,8 +19,8 @@ HWRM is **32-bit and not Large Address Aware** (2 GB) — build everything Win32
 - [x] Record GL context type: core vs compatibility profile, GL version actually created *(3.3 compatibility via wglCreateContextAttribsARB, vsync off; game itself uses no legacy GL)*
 - [x] **Dormant VR check:** *(negative on build 12653478 — no OpenVR/OpenXR/LibOVR code; details in FINDINGS)* search the binary for `openvr_api`, `IVRSystem`, `IVRCompositor`, `VR_Init`, "vive", "oculus", "steamvr", VR-ish command-line flags, and VR-related Lua bindings. Gearbox reportedly tested a VR spectator mode in 2016. If anything turns up, chase it before anything else.
 - [x] ~~RenderDoc~~ apitrace capture of a skirmish frame: identify main scene pass, where view/projection matrices are uploaded (`glUniformMatrix4fv` / UBO), shadow/glow/post passes, and HUD/sensors-manager passes *(pass map + `inMatV`/`inMatC`/`inMatP` uniforms; HUD in its own FBO — see FINDINGS)*
-- [ ] Prove one view-matrix override shifts the scene cleanly without breaking HUD
-- [x] Write the go/no-go call in `docs/FINDINGS.md` *(provisional GO — finalize after the override spike)*
+- [x] Prove one view-matrix override shifts the scene cleanly without breaking HUD *(2 in-game runs; light glows needed the view-space `inMatP` rule; CPU-positioned 2D markers stay with the game camera — see FINDINGS)*
+- [x] Write the go/no-go call in `docs/FINDINGS.md` *(GO, final)*
 
 **Go if** the camera matrix is identifiable + overridable and HUD draws are distinguishable. **No-go/rethink if** matrices are baked per-object CPU-side or HUD/scene draws interleave unpredictably.
 
