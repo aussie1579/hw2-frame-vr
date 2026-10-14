@@ -179,6 +179,19 @@ struct Gl {
         get_uniformfv(program, loc, back);
         return nearly_equal(back, expected);
     }
+    // Same, with an (empty) draw in between: group B's inMatMV is only decided at draw time.
+    bool upload_draw_reads_back(GLuint program, const char* name, const float value[16], const float expected[16]) const {
+        const GLint loc = get_uniform_location(program, name);
+        if (loc < 0) return false;
+        uniform_matrix4fv(loc, 1, GL_FALSE, value);
+        return draw_reads_back(program, name, expected);
+    }
+    bool draw_reads_back(GLuint program, const char* name, const float expected[16]) const {
+        glDrawArrays(GL_POINTS, 0, 0);  // through the proxy's draw hook
+        GLfloat back[16] = {};
+        get_uniformfv(program, get_uniform_location(program, name), back);
+        return nearly_equal(back, expected);
+    }
 };
 
 // --- HUD pipeline ([debug] hud_capture = 1): capture, transmittance -> coverage, clear, cursor redirect ----------
@@ -395,13 +408,29 @@ int main() {
 
     gl.use_program(hud);
     gl.upload_reads_back(hud, "inMatP", kOrtho, kOrtho);
-    check(gl.upload_reads_back(hud, "inMatMV", kView, kView), "HUD program (ortho inMatP): inMatMV untouched");
+    check(gl.upload_draw_reads_back(hud, "inMatMV", kView, kView), "HUD program (ortho inMatP): inMatMV untouched");
 
     gl.use_program(mv_as_view);
     gl.upload_reads_back(mv_as_view, "inMatP", kPerspective, kPerspective);
     expect.camera(kView, want);
-    check(gl.upload_reads_back(mv_as_view, "inMatMV", kView, want),
+    check(gl.upload_draw_reads_back(mv_as_view, "inMatMV", kView, want),
           "P*MV program with perspective inMatP: inMatMV treated as camera");
+
+    // A program used for 2D and 3D in the same frame, uploading inMatMV before inMatP (prog 68: HUD lines vs.
+    // Sensors Manager ship icons). Only the projection at draw time may decide.
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    const GLuint dual = gl.build("void main() { gl_Position = inMatP * inMatMV * vec4(inPos, 1.0); }\n");
+    gl.use_program(dual);
+    gl.upload_reads_back(dual, "inMatP", kOrtho, kOrtho);
+    check(gl.upload_draw_reads_back(dual, "inMatMV", identity, identity), "dual-use program, 2D draw: inMatMV raw");
+    gl.uniform_matrix4fv(gl.get_uniform_location(dual, "inMatMV"), 1, GL_FALSE, kView);  // MV first...
+    gl.upload_reads_back(dual, "inMatP", kPerspective, kPerspective);                      // ...then P
+    expect.camera(kView, want);
+    check(gl.draw_reads_back(dual, "inMatMV", want), "dual-use program, 3D draw (MV uploaded before P): camera override");
+    gl.uniform_matrix4fv(gl.get_uniform_location(dual, "inMatMV"), 1, GL_FALSE, identity);
+    gl.upload_reads_back(dual, "inMatP", kOrtho, kOrtho);
+    check(gl.draw_reads_back(dual, "inMatMV", identity), "dual-use program, back to 2D: inMatMV raw again");
+    gl.delete_program(dual);
 
     gl.use_program(view_space);
     expect.view_space_projection(kPerspective, want);

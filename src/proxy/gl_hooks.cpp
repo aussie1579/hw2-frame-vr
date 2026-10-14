@@ -3,7 +3,7 @@
 //
 // Where the camera enters a shader (docs/FINDINGS.md "Camera", all programs of build 12653478):
 //   A. inMatV or inMatC present           -> that uniform is the camera view          (E * V)
-//   B. only inMatMV + inMatP              -> inMatMV is model-view, if inMatP is perspective (E * MV)
+//   B. only inMatMV + inMatP              -> inMatMV is model-view, if inMatP is perspective at draw time (E * MV)
 //   C. only inMatP                        -> vertices are already in view space (CPU-transformed, e.g. the light
 //                                            glows, prog "screenCorner"), if inMatP is perspective (P * E)
 // B and C programs with an ortho inMatP are 2D HUD / post-processing and stay untouched. "Perspective" comes from
@@ -67,8 +67,17 @@ struct ProgramInfo {
     GLint loc_proj = -1;  // inMatP
     bool proj_is_perspective = false;  // from this program's last inMatP upload
 
+    // Group B: whether inMatMV carries the camera depends on the projection *at draw time*. Some programs switch
+    // between 2D and 3D within a frame and upload inMatMV before inMatP (prog 68: HUD lines vs. Sensors Manager
+    // ship icons), so the raw value is kept and the right one is uploaded just before each draw.
+    GLfloat raw_mv[16] = {};
+    bool has_raw_mv = false;
+    bool mv_overridden = false;          // what the driver currently holds for inMatMV
+    unsigned raw_version = 0, override_frame = 0, override_version = 0;
+
     bool has_camera_matrix() const { return loc_view >= 0 || loc_cam >= 0; }
     bool view_space_input() const { return !has_camera_matrix() && loc_mv < 0; }  // group C
+    bool mv_may_be_camera() const { return !has_camera_matrix() && loc_mv >= 0; }   // group B
 };
 
 struct TrackedUniform {
@@ -86,6 +95,7 @@ std::unordered_map<GLuint, ProgramInfo> g_programs;  // node-based: element poin
 GLuint g_current_program = 0;
 ProgramInfo* g_current = nullptr;
 GLuint g_draw_fbo = 0;
+unsigned g_frame = 1;  // bumped at every swap: the eye camera changes per frame
 
 ProgramInfo* find_program(GLuint program) {
     auto it = g_programs.find(program);
@@ -100,14 +110,31 @@ void forget_program(GLuint program) {
 // The game's main camera projection has an infinite far plane (m[10] == -1); the skybox's is finite.
 bool is_main_projection(const GLfloat* m) { return std::fabs(m[10] + 1.0f) < 1e-4f; }
 
-// Does this upload carry the camera view (groups A and B in the file comment)?
+// Does this upload carry the camera view (group A in the file comment)? Group B is decided at draw time.
 bool camera_view_source(const ProgramInfo& info, GLint loc, hw2vr::stereo::CameraUniform* source) {
     using hw2vr::stereo::CameraUniform;
     if (loc == info.loc_view) *source = CameraUniform::InMatV;
     else if (loc == info.loc_cam) *source = CameraUniform::InMatC;
-    else if (loc == info.loc_mv && !info.has_camera_matrix() && info.proj_is_perspective) *source = CameraUniform::InMatMV;
     else return false;
     return true;
+}
+
+// Group B, just before a draw: the driver must hold E * MV when the current projection is perspective (3D) and the
+// game's raw MV otherwise (2D). Re-uploaded once per frame because E changes every frame (alternating eyes).
+void sync_model_view(ProgramInfo& info) {
+    const bool want_override = hw2vr::stereo::active() && info.proj_is_perspective;
+    if (want_override) {
+        if (info.mv_overridden && info.override_frame == g_frame && info.override_version == info.raw_version) return;
+        GLfloat eye_mv[16];
+        hw2vr::stereo::apply_view_override(info.raw_mv, eye_mv, hw2vr::stereo::CameraUniform::InMatMV);
+        real_glUniformMatrix4fv(info.loc_mv, 1, 0 /* no transpose */, eye_mv);
+        info.mv_overridden = true;
+        info.override_frame = g_frame;
+        info.override_version = info.raw_version;
+    } else if (info.mv_overridden) {
+        real_glUniformMatrix4fv(info.loc_mv, 1, 0 /* no transpose */, info.raw_mv);
+        info.mv_overridden = false;
+    }
 }
 
 void APIENTRY my_glUseProgram(GLuint program) {
@@ -166,6 +193,11 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
                     return;
                 }
             }
+        } else if (loc == info->loc_mv && info->mv_may_be_camera()) {
+            std::memcpy(info->raw_mv, value, sizeof info->raw_mv);  // decided per draw (sync_model_view)
+            info->has_raw_mv = true;
+            info->mv_overridden = false;
+            ++info->raw_version;
         } else if (hw2vr::stereo::CameraUniform source; override_camera && camera_view_source(*info, loc, &source)) {
             hw2vr::stereo::apply_view_override(value, replaced, source);
             real_glUniformMatrix4fv(loc, 1, transpose, replaced);
@@ -179,6 +211,7 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
 // cursor), go onto the VR overlay instead (hud_layer.h). Untracked programs count as 2D.
 template <class Draw>
 void game_draw(Draw draw) {
+    if (g_current && g_current->has_raw_mv) sync_model_view(*g_current);
     const bool is_2d = !g_current || !g_current->proj_is_perspective;
     if (!hw2vr::hud::should_redirect(g_draw_fbo, g_current_program, is_2d)) return draw();
     hw2vr::hud::begin_redirect(g_draw_fbo);
@@ -250,6 +283,7 @@ extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
     if (float rgb[3]; hw2vr::stereo::mode_indicator_color(rgb) && hw2vr::gl::load()) draw_mode_indicator(dc, rgb);
     const BOOL ok = real_wglSwapBuffers(dc);
     hw2vr::vrframe::after_swap();
+    ++g_frame;
     return ok;
 }
 
