@@ -36,6 +36,11 @@ if ((Test-Path $openvr) -and ('openvr_api.dll' -notin $previous)) {
 }
 Copy-Item (Join-Path $build 'openvr_api.dll') $openvr -Force
 $placed += 'openvr_api.dll'
+# SteamVR Input: action manifest + Steam Frame default binding (bindings/generate_bindings.py), always replaced.
+$bindings = Join-Path $GameDir 'hw2vr_bindings'
+New-Item -ItemType Directory -Force $bindings | Out-Null
+Copy-Item (Join-Path $root 'bindings\*.json') $bindings -Force
+$placed += 'hw2vr_bindings'
 $ini = Join-Path $GameDir 'hw2vr.ini'
 if ($ResetConfig -and (Test-Path $ini)) { Move-Item $ini "$ini.bak" -Force; Write-Host "Old hw2vr.ini kept as hw2vr.ini.bak" }
 if (-not (Test-Path $ini)) {

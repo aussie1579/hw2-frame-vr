@@ -7,6 +7,9 @@
 #include "common/log.h"
 #include "common/version.h"
 #include "hud/hud_layer.h"
+#include "hud/hud_panel.h"
+#include "input/controls.h"
+#include "input/key_names.h"
 #include "proxy/gl_hooks.h"
 #include "proxy/real_gl.h"
 #include "stereo/view_override.h"
@@ -19,6 +22,34 @@ std::wstring module_dir(HMODULE module) {
     const DWORD n = GetModuleFileNameW(module, buf, MAX_PATH);
     std::wstring path(buf, n);
     return path.substr(0, path.find_last_of(L"\\/") + 1);
+}
+
+void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& dir) {
+    hw2vr::panel::Settings panel;
+    panel.defaults = hw2vr::panel::centred(cfg.panel_distance, cfg.panel_width_degrees, cfg.panel_height);
+    panel.pixels_per_degree = cfg.panel_pixels_per_degree;
+    panel.premultiplied = cfg.vr_hud_premultiplied;
+    panel.state_path = dir + L"hw2vr_panel.ini";
+    hw2vr::panel::configure(panel);
+
+    hw2vr::controls::Settings c;
+    c.stick_deadzone = cfg.stick_deadzone;
+    c.camera_speed = cfg.camera_speed;
+    c.camera_invert_y = cfg.camera_invert_y;
+    c.zoom_notches_per_second = cfg.zoom_notches_per_second;
+    c.zoom_invert = cfg.zoom_invert;
+    c.click_freeze_ms = cfg.click_freeze_ms;
+    c.filter_min_cutoff = cfg.filter_min_cutoff;
+    c.filter_beta = cfg.filter_beta;
+    c.haptics = cfg.haptics;
+    c.show_beam = cfg.show_beam;
+    c.cursor_distance = cfg.cursor_distance;
+    for (int i = 0; i < hw2vr::input::kButtonCount; ++i) {
+        if (!hw2vr::keys::parse_binding(cfg.buttons[i].c_str(), &c.buttons[i]))
+            HW2VR_LOG("config: [buttons] %ls = '%ls' has an unknown key name - unbound", hw2vr::input::kButtons[i].ini_key,
+                      cfg.buttons[i].c_str());
+    }
+    hw2vr::controls::configure(c);
 }
 
 // Runs under the loader lock (the game imports opengl32 statically): no threads, no waiting on other DLLs.
@@ -37,16 +68,14 @@ bool init(HMODULE self) {
     hw2vr::vrframe::Settings vr;
     vr.autostart = cfg.vr_autostart;
     vr.world_scale = cfg.vr_world_scale;
-    vr.hud_distance = cfg.vr_hud_distance;
-    vr.hud_scale = cfg.vr_hud_scale;
     vr.hud_premultiplied = cfg.vr_hud_premultiplied;
-    vr.hud_follow_head = cfg.vr_hud_follow_head;
     vr.sync_stereo = cfg.vr_sync_stereo;
     vr.key_toggle = cfg.key_vr_toggle;
     vr.key_recentre = cfg.key_recentre;
     vr.key_scale_up = cfg.key_scale_up;
     vr.key_scale_down = cfg.key_scale_down;
     hw2vr::vrframe::configure(vr, dir);  // VR itself starts on the render thread (hotkey or autostart)
+    configure_panel_and_controls(cfg, dir);
     if (cfg.debug_hud_capture) {
         hw2vr::hud::set_capture(true, cfg.vr_hud_premultiplied);
         HW2VR_LOG("debug: HUD capture forced on without VR");

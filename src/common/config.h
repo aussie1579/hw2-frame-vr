@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "input/buttons.h"
+
 namespace hw2vr {
 
 // hw2vr.ini next to the DLL. Missing file or keys fall back to these defaults.
@@ -13,11 +15,29 @@ struct Config {
     // VR (Tier 2). Ctrl+Shift+F8 toggles VR, F10 recentres, PgUp/PgDn change world scale.
     bool vr_autostart = false;      // start VR at the first frame instead of waiting for Ctrl+Shift+F8
     float vr_world_scale = 100.0f;  // game units per real metre (head movement and eye separation)
-    float vr_hud_distance = 3.0f;   // metres
-    float vr_hud_scale = 1.0f;      // 1 = HUD spans the game's field of view (markers line up with ships)
     bool vr_hud_premultiplied = true;
-    bool vr_hud_follow_head = true;  // HUD panel sits at the head's position; orientation stays with the game camera
     bool vr_sync_stereo = true;      // [vr] stereo = sync (both eyes every frame) | afr (alternating frames)
+
+    // [panel]: the curved screen with the game's 2D UI, until moved with its grab bar (then hw2vr_panel.ini).
+    float panel_distance = 1.8f;           // metres
+    float panel_width_degrees = 65.0f;     // curved round the player
+    float panel_height = -0.1f;            // metres above eye level
+    float panel_pixels_per_degree = 20.0f; // UI image resolution on the panel; 0 = full size (may shimmer)
+
+    // [controls]
+    float stick_deadzone = 0.2f;
+    float camera_speed = 1200.0f;  // left stick orbit: mouse counts per second at full stick
+    bool camera_invert_y = false;
+    float zoom_notches_per_second = 8.0f;
+    bool zoom_invert = false;
+    int click_freeze_ms = 120;
+    float filter_min_cutoff = 1.0f, filter_beta = 0.007f;
+    bool haptics = true;
+    bool show_beam = true;
+    float cursor_distance = 10.0f;  // metres
+
+    // [buttons]: key names / combos / VR actions (input/key_names.h), defaults in input/buttons.h.
+    std::wstring buttons[input::kButtonCount];
 
     // Hotkeys, all Ctrl+Shift+<key> ([hotkeys] in the ini takes key names, see common/hotkeys.h).
     int key_vr_toggle = 0x77;  // F8

@@ -41,12 +41,35 @@ Config load_config(const std::wstring& ini_path) {
 
     c.vr_autostart = GetPrivateProfileIntW(L"vr", L"autostart", c.vr_autostart ? 1 : 0, ini_path.c_str()) != 0;
     c.vr_world_scale = read_float(ini_path, L"vr", L"world_scale", c.vr_world_scale);
-    c.vr_hud_distance = read_float(ini_path, L"vr", L"hud_distance", c.vr_hud_distance);
-    c.vr_hud_scale = read_float(ini_path, L"vr", L"hud_scale", c.vr_hud_scale);
     c.vr_hud_premultiplied =
         GetPrivateProfileIntW(L"vr", L"hud_premultiplied", c.vr_hud_premultiplied ? 1 : 0, ini_path.c_str()) != 0;
-    c.vr_hud_follow_head =
-        GetPrivateProfileIntW(L"vr", L"hud_follow_head", c.vr_hud_follow_head ? 1 : 0, ini_path.c_str()) != 0;
+
+    c.panel_distance = read_float(ini_path, L"panel", L"distance", c.panel_distance);
+    c.panel_width_degrees = read_float(ini_path, L"panel", L"width_degrees", c.panel_width_degrees);
+    c.panel_height = read_float(ini_path, L"panel", L"height", c.panel_height);
+    c.panel_pixels_per_degree = read_float(ini_path, L"panel", L"pixels_per_degree", c.panel_pixels_per_degree);
+
+    auto flag = [&](const wchar_t* key, bool fallback) {
+        return GetPrivateProfileIntW(L"controls", key, fallback ? 1 : 0, ini_path.c_str()) != 0;
+    };
+    c.stick_deadzone = read_float(ini_path, L"controls", L"stick_deadzone", c.stick_deadzone);
+    c.camera_speed = read_float(ini_path, L"controls", L"camera_speed", c.camera_speed);
+    c.camera_invert_y = flag(L"camera_invert_y", c.camera_invert_y);
+    c.zoom_notches_per_second = read_float(ini_path, L"controls", L"zoom_notches_per_second", c.zoom_notches_per_second);
+    c.zoom_invert = flag(L"zoom_invert", c.zoom_invert);
+    c.click_freeze_ms = static_cast<int>(GetPrivateProfileIntW(L"controls", L"click_freeze_ms", c.click_freeze_ms, ini_path.c_str()));
+    c.filter_min_cutoff = read_float(ini_path, L"controls", L"filter_min_cutoff", c.filter_min_cutoff);
+    c.filter_beta = read_float(ini_path, L"controls", L"filter_beta", c.filter_beta);
+    c.haptics = flag(L"haptics", c.haptics);
+    c.show_beam = flag(L"show_beam", c.show_beam);
+    c.cursor_distance = read_float(ini_path, L"controls", L"cursor_distance", c.cursor_distance);
+
+    for (int i = 0; i < input::kButtonCount; ++i) {
+        wchar_t buf[64];
+        GetPrivateProfileStringW(L"buttons", input::kButtons[i].ini_key, input::kButtons[i].default_keys, buf,
+                                 static_cast<DWORD>(std::size(buf)), ini_path.c_str());
+        c.buttons[i] = buf;
+    }
 
     c.key_vr_toggle = read_key(ini_path, L"vr_toggle", c.key_vr_toggle);
     c.key_recentre = read_key(ini_path, L"recentre", c.key_recentre);

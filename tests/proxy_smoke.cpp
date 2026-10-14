@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <GL/gl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -196,9 +197,12 @@ struct Gl {
 
 // --- HUD pipeline ([debug] hud_capture = 1): capture, transmittance -> coverage, clear, cursor redirect ----------
 struct HudTestState {
-    unsigned hud_fbo, overlay_texture, overlay_frames, redirected_draws;  // mirrors hw2vr::hud::TestState
+    unsigned hud_fbo, overlay_texture, overlay_frames, redirected_draws, cursor_texture, cursor_draws;  // hud::TestState
 };
 using PFNTESTSTATE = HudTestState (*)();
+using PFNTESTSETCURSOR = void (*)(int, int);
+using PFNTESTBUILDPANEL = unsigned (*)(int, int);
+using PFNTESTUIAT = int (*)(float, float);
 using PFNBINDFRAMEBUFFER = void(APIENTRY*)(GLenum, GLuint);
 using PFNGENFRAMEBUFFERS = void(APIENTRY*)(GLsizei, GLuint*);
 using PFNFRAMEBUFFERTEXTURE2D = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
@@ -289,6 +293,12 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
         uniform4fv(gl.get_uniform_location(program, "inTint"), 1, tint);
     };
 
+    // The cursor texture is centred on the cursor's hotspot: pretend it is at the left edge of the "cursor" quad, at
+    // the top of the window, so the quad fills only the texture's right half below the centre.
+    auto set_cursor = reinterpret_cast<PFNTESTSETCURSOR>(GetProcAddress(proxy, "hw2vr_test_set_cursor"));
+    check(set_cursor != nullptr, "proxy exports hw2vr_test_set_cursor");
+    if (set_cursor) set_cursor(2 * w / 3, 0);
+
     glEnable(GL_BLEND);
     for (int frame = 0; frame < 16; ++frame) {
         bind_fbo(GL_FRAMEBUFFER, hud_fbo);
@@ -304,17 +314,17 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
         setup(other, kOrtho, 1, identity, red);
         glDrawArrays(GL_TRIANGLES, 0, 6);    // "composite" by a non-UI program: must stay on screen
         setup(ui, kOrtho, 1, identity, red);
-        glDrawArrays(GL_TRIANGLES, 12, 6);   // "cursor" by the UI program: must go onto the overlay
+        glDrawArrays(GL_TRIANGLES, 12, 6);   // "cursor" by the UI program: must go into the cursor texture
         wglSwapBuffers(dc);
     }
 
     auto state_fn = reinterpret_cast<PFNTESTSTATE>(GetProcAddress(proxy, "hw2vr_test_state"));
     const HudTestState s = state_fn ? state_fn() : HudTestState{};
-    std::printf("HUD state: hud_fbo %u (ours %u), overlay tex %u, overlay frames %u, redirected draws %u\n", s.hud_fbo,
-                hud_fbo, s.overlay_texture, s.overlay_frames, s.redirected_draws);
+    std::printf("HUD state: hud_fbo %u (ours %u), overlay tex %u, overlay frames %u, redirected draws %u, cursor draws %u\n",
+                s.hud_fbo, hud_fbo, s.overlay_texture, s.overlay_frames, s.redirected_draws, s.cursor_draws);
     check(s.hud_fbo == hud_fbo, "HUD framebuffer identified from its ortho uploads");
-    check(s.overlay_frames >= 3 && s.redirected_draws == 2 * s.overlay_frames,
-          "per frame: the 2D element and the cursor redirected, the 3D element not");
+    check(s.overlay_frames >= 3 && s.redirected_draws == s.overlay_frames && s.cursor_draws == s.overlay_frames,
+          "per frame: the 2D element to the overlay, the cursor to the cursor texture, the 3D element stays");
 
     std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
     auto at = [&](int third) { return &px[(static_cast<size_t>(h / 2) * w + (2 * third + 1) * w / 6) * 4]; };
@@ -326,13 +336,50 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
     print("overlay  cursor:", at(2));
     check(pixel_near(at(0), 64, 0, 0, 128), "overlay: 2D element, premultiplied colour + coverage alpha");
     check(pixel_near(at(1), 0, 0, 0, 0), "overlay: no 3D element (it belongs in the eye images)");
-    check(pixel_near(at(2), 64, 0, 0, 128), "overlay: cursor redirected onto it");
+    check(pixel_near(at(2), 0, 0, 0, 0), "overlay: no cursor (it has its own texture)");
     glBindTexture(GL_TEXTURE_2D, hud_tex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
     print("game HUD 2D element:", at(0));
     print("game HUD 3D element:", at(1));
     check(pixel_near(at(0), 0, 0, 0, 255), "game's HUD layer: no 2D element (it went to the overlay)");
     check(pixel_near(at(1), 0, 64, 0, 128), "game's HUD layer: 3D element kept, game's own alpha convention");
+
+    // Cursor texture (128 x 128, rows bottom-up): hotspot in the centre, the quad right of it and below the window top.
+    std::vector<unsigned char> cur(128 * 128 * 4);
+    glBindTexture(GL_TEXTURE_2D, s.cursor_texture);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, cur.data());
+    auto cur_at = [&](int x, int row) { return &cur[(static_cast<size_t>(row) * 128 + x) * 4]; };
+    const int right = 64 + std::min(w - 2 * w / 3, 64) / 2, below = 64 - std::min(h, 64) / 2;  // inside the quad
+    print("cursor right, below:", cur_at(right, below));
+    print("cursor left, below:", cur_at(32, below));
+    print("cursor right, above top:", cur_at(right, 96));
+    check(s.cursor_texture && pixel_near(cur_at(right, below), 64, 0, 0, 128) && pixel_near(cur_at(32, below), 0, 0, 0, 0) &&
+              pixel_near(cur_at(right, 96), 0, 0, 0, 0),
+          "cursor texture: drawn round the hotspot (premultiplied colour + coverage alpha)");
+
+    // Panel filter + UI mask: the overlay filtered to a quarter size keeps flat areas exact; the mask (one frame
+    // late, so built twice) marks where the UI is.
+    auto build_panel = reinterpret_cast<PFNTESTBUILDPANEL>(GetProcAddress(proxy, "hw2vr_test_build_panel"));
+    auto ui_at = reinterpret_cast<PFNTESTUIAT>(GetProcAddress(proxy, "hw2vr_test_ui_at"));
+    check(build_panel && ui_at, "proxy exports the panel test hooks");
+    if (build_panel && ui_at) {
+        const int pw = w / 4, ph = h / 4;
+        build_panel(pw, ph);
+        const unsigned panel = build_panel(pw, ph);
+        std::vector<unsigned char> pan(static_cast<size_t>(pw) * ph * 4);
+        glBindTexture(GL_TEXTURE_2D, panel);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pan.data());
+        auto pan_at = [&](int third) { return &pan[(static_cast<size_t>(ph / 2) * pw + (2 * third + 1) * pw / 6) * 4]; };
+        print("panel 2D element:", pan_at(0));
+        print("panel 3D element:", pan_at(1));
+        check(panel && pixel_near(pan_at(0), 64, 0, 0, 128) && pixel_near(pan_at(1), 0, 0, 0, 0),
+              "panel texture: the overlay filtered down to a quarter, flat areas unchanged");
+        std::printf("  UI mask at the 2D element %d, at the 3D element %d, at the cursor %d\n", ui_at(1.0f / 6, 0.5f),
+                    ui_at(0.5f, 0.5f), ui_at(5.0f / 6, 0.5f));
+        check(ui_at(1.0f / 6, 0.5f) == 1 && ui_at(0.5f, 0.5f) == 0 && ui_at(5.0f / 6, 0.5f) == 0,
+              "UI mask: set over the 2D element only (the laser points through the rest)");
+    }
+    if (set_cursor) set_cursor(-1, -1);
     check(glGetError() == GL_NO_ERROR, "no GL errors in the HUD pipeline");
 }
 

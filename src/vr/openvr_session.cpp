@@ -6,6 +6,8 @@
 
 #include "common/log.h"
 #include "common/mat4.h"
+#include "vr/openvr_internal.h"
+#include "vr/overlay.h"
 
 namespace hw2vr::vr {
 namespace {
@@ -24,7 +26,7 @@ PFN_GetInitErrorDescription g_describe = nullptr;
 ::vr::IVRSystem* g_system = nullptr;
 ::vr::IVRCompositor* g_compositor = nullptr;
 ::vr::IVROverlay* g_overlay = nullptr;
-::vr::VROverlayHandle_t g_hud = ::vr::k_ulOverlayHandleInvalid;
+::vr::IVRInput* g_input = nullptr;
 EyeFrustum g_frustum[2] = {};
 float g_eye_to_head[2][16] = {};
 
@@ -42,7 +44,7 @@ void unload() {
     g_system = nullptr;
     g_compositor = nullptr;
     g_overlay = nullptr;
-    g_hud = ::vr::k_ulOverlayHandleInvalid;
+    g_input = nullptr;
     if (g_dll) FreeLibrary(g_dll);
     g_dll = nullptr;
 }
@@ -85,6 +87,7 @@ bool start(const std::wstring& dll_dir) {
     g_system = get_interface<::vr::IVRSystem*>(get, ::vr::IVRSystem_Version);
     g_compositor = get_interface<::vr::IVRCompositor*>(get, ::vr::IVRCompositor_Version);
     g_overlay = get_interface<::vr::IVROverlay*>(get, ::vr::IVROverlay_Version);
+    g_input = get_interface<::vr::IVRInput*>(get, ::vr::IVRInput_Version);  // optional: no controls without it
     if (!g_system || !g_compositor || !g_overlay) {
         stop();
         return false;
@@ -116,7 +119,7 @@ bool start(const std::wstring& dll_dir) {
 
 void stop() {
     if (!g_dll) return;
-    if (g_overlay && g_hud != ::vr::k_ulOverlayHandleInvalid) g_overlay->DestroyOverlay(g_hud);
+    destroy_all_overlays();
     if (g_system && g_shutdown) g_shutdown();
     HW2VR_LOG("vr: stopped");
     unload();
@@ -157,36 +160,8 @@ bool submit(int eye, unsigned gl_texture, const float hmd_pose_used[16]) {
     return err == ::vr::VRCompositorError_None;
 }
 
-bool hud_create(bool premultiplied) {
-    if (g_hud != ::vr::k_ulOverlayHandleInvalid) return true;
-    const auto err = g_overlay->CreateOverlay("hw2vr.hud", "Homeworld 2 HUD", &g_hud);
-    if (err != ::vr::VROverlayError_None) {
-        HW2VR_LOG("vr: CreateOverlay failed with error %d - HUD stays in the eye images", static_cast<int>(err));
-        g_hud = ::vr::k_ulOverlayHandleInvalid;
-        return false;
-    }
-    g_overlay->SetOverlayFlag(g_hud, ::vr::VROverlayFlags_IsPremultiplied, premultiplied);
-    return true;
-}
-
-void hud_set_texture(unsigned gl_texture) {
-    if (g_hud == ::vr::k_ulOverlayHandleInvalid) return;
-    ::vr::Texture_t tex{reinterpret_cast<void*>(static_cast<uintptr_t>(gl_texture)), ::vr::TextureType_OpenGL,
-                        ::vr::ColorSpace_Gamma};
-    g_overlay->SetOverlayTexture(g_hud, &tex);
-}
-
-void hud_place(const float tracking_from_hud[16], float width_m) {
-    if (g_hud == ::vr::k_ulOverlayHandleInvalid) return;
-    ::vr::HmdMatrix34_t m;
-    mat4::to_rows3x4(tracking_from_hud, m.m);
-    g_overlay->SetOverlayTransformAbsolute(g_hud, ::vr::TrackingUniverseSeated, &m);
-    g_overlay->SetOverlayWidthInMeters(g_hud, width_m);
-}
-
-void hud_visible(bool on) {
-    if (g_hud == ::vr::k_ulOverlayHandleInvalid) return;
-    on ? g_overlay->ShowOverlay(g_hud) : g_overlay->HideOverlay(g_hud);
-}
+::vr::IVRSystem* system_api() { return g_system; }
+::vr::IVROverlay* overlay_api() { return g_overlay; }
+::vr::IVRInput* input_api() { return g_input; }
 
 }  // namespace hw2vr::vr

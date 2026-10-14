@@ -13,6 +13,7 @@ VR mod for **Homeworld 2 Remastered** (HomeworldRM.exe, Homeworld Remastered Col
 
 **Phase 0 (spikes) — done, GO (2026-10-14).** Brendo chose to skip Phase 1 and go straight to Tier 2.
 **Tier 2 (stereo MVP) — v0.5.0; headset tests 1-5 done: stereo, head tracking, HUD split (2D panel + stereo 3D overlay) and synchronized stereo by GL replay all confirmed in-headset; ~60 fps in battle, every frame replayed (see FINDINGS).** Synchronized stereo (`src/stereo/frame_replay` + `src/proxy/gl_record_hooks`, AFR fallback via `[vr] stereo = afr`), frame loop (`src/vr/vr_frame`), per-eye view + projection (`src/stereo`), HUD lifted from its FBO onto an OpenVR overlay fixed in game-camera space (`src/hud`), OpenVR loaded at runtime from `third_party/openvr` (v2.15.6, win32). Ctrl+Shift+F8 toggles VR. **No multiplayer guard yet** — VR is opt-in per session until there is one.
+**Tier 3 (controls + HUD rebuild) — v0.6.0, awaiting headset test 6.** Brendo's calls: HUD was "too wide / UI at the edges" → one curved, movable ~65° panel (`src/hud/hud_panel`, filtered UI texture, grab bar; markers no longer line up — accepted); controls = laser mouse + sticks (`src/input/controls`: right laser = mouse on the panel's UI and into the world through its see-through parts, trigger/bumper = left/right click, left stick = orbit via emulated right-drag, right stick = zoom, other buttons = hw2vr.ini `[buttons]` keys); SteamVR Input with a **Steam Frame-only** default binding (`bindings/generate_bindings.py`, installed to `hw2vr_bindings\`). The left-hand palette from the original Tier 3 plan is dropped for now (it was "graphically rough" in the Factorio project); the game's own taskbar on the panel does that job.
 The proxy skeleton exists: `src/proxy` (366 forwarded exports + `wglGetProcAddress`/`wglSwapBuffers` hooks), `src/stereo/view_override` (spike: Ctrl+Shift+F9 cycles a fixed camera yaw/offset). Build + test with `tools/smoke-test.ps1` (no game needed), deploy with `tools/install.ps1` / `tools/uninstall.ps1`.
 HWRM is **32-bit and not Large Address Aware** (2 GB) — build everything Win32 and keep the proxy lean (LAA is opt-in only, see Conventions). See `docs/FINDINGS.md`.
 
@@ -36,7 +37,7 @@ HomeworldRM.exe
        ├─ stereo:  v1 alternating-frame (AFR) → v2 synchronized (replay scene per eye)
        ├─ HUD:     detect ortho/2D passes → render to FBO → textured quad in VR space
        ├─ submit:  OpenVR IVRCompositor::Submit (GL texture)  [OpenXR XR_KHR_opengl_enable later if needed]
-       └─ input:   OpenVR actions → pointer raycast → SendInput mouse; palette overlay on left hand
+       └─ input:   OpenVR actions → laser raycast (panel UI mask / world projection) → SetCursorPos + SendInput
 ```
 
 Suggested layout:
@@ -45,8 +46,8 @@ src/proxy/      # DllMain, export forwarding, GL hooks
 src/vr/         # OpenVR init, pose, submit, actions
 src/stereo/     # matrix capture/override, AFR/sync logic
 src/hud/        # 2D-pass detection, FBO, quad
-src/input/      # raycast, mouse injection, palette
-bindings/       # SteamVR action manifest + default bindings (Frame, OpenXR generic, Touch)
+src/input/      # laser maths, controls, key names, input injection, sprites
+bindings/       # SteamVR action manifest + Steam Frame default binding (generate_bindings.py)
 docs/           # FEASIBILITY.md, FINDINGS.md (RE notes), decisions
 tools/          # RenderDoc/CE/Ghidra helper scripts
 ```

@@ -8,7 +8,10 @@
 //     offsets, the Sensors Manager disc) -> must be stereo, at the depth of what it marks.
 // In VR the 2D draws are redirected into our overlay texture (with coverage alpha) and the 3D draws stay in the
 // game's HUD framebuffer with the per-eye camera, so the game's own composite puts them in each eye image. UI the
-// game draws straight to the screen after the composite (the mouse cursor) is redirected onto the overlay too.
+// game draws straight to the screen after the composite (the mouse cursor) goes into a small cursor texture centred
+// on the cursor's hotspot, so the cursor can be shown on the VR panel or out in the world at the laser's aim.
+// The VR panel shows a filtered, downsampled copy of the overlay (build_panel_texture): SteamVR samples overlays
+// without mipmaps, so the full-size UI on a panel ~1300 headset pixels wide would shimmer.
 namespace hw2vr::hud {
 
 // Identification: gl_hooks reports every ortho inMatP upload with the draw framebuffer it happened in; the HUD is the
@@ -18,20 +21,47 @@ bool is_hud_fbo(unsigned fbo);
 
 void set_capture(bool enabled, bool premultiplied);
 void set_target_size(int width, int height);  // the game's HUD is window-sized
+void set_window(void* hwnd);                  // the game window (cursor position for the cursor texture)
 // Called by the glBindFramebuffer hook before the game switches draw framebuffer.
 void on_draw_framebuffer_change(unsigned from, unsigned to);
 void end_frame();
 
 bool overlay_ready();        // the overlay texture was rebuilt this frame
-unsigned overlay_texture();  // GL texture for the VR overlay (premultiplied colour, coverage alpha)
+unsigned overlay_texture();  // full-size 2D UI (premultiplied colour, coverage alpha)
+int overlay_width();         // its size (the game window's), 0 before the first HUD frame
+int overlay_height();
 void release();              // delete GL objects (VR off)
 
+// The overlay filtered down to width x height for the VR panel (call after the frame's draws, before the swap).
+// Returns the panel texture, or 0 if there is no overlay yet.
+unsigned build_panel_texture(int width, int height);
+
+// Where the 2D UI actually has something: a coarse coverage mask (1/8 of the window per side) read back without
+// stalling, one frame late, from the overlay's mipmaps. build_panel_texture updates it. The laser treats the
+// panel as UI only where the mask is set; elsewhere it points through the panel into the world.
+// Returns 1 = UI there, 0 = transparent, -1 = no mask yet. u, v from the top-left.
+int ui_at(float u, float v);
+
+// The mouse cursor, drawn into its own kCursorSize square texture with its hotspot at the centre.
+constexpr int kCursorSize = 128;
+struct Cursor {
+    bool drawn = false;   // the game drew a cursor this frame
+    unsigned texture = 0;
+    int x = 0, y = 0;     // hotspot, client pixels
+};
+const Cursor& current_cursor();  // this frame so far (before the swap)
+const Cursor& last_cursor();     // the last completed frame (after the swap)
+void set_cursor_override(int x, int y);  // tests: pretend the cursor is here (x < 0 = off)
+
 // Every game draw, before it runs. is_2d: the current program's projection is ortho (or untracked).
-// Redirect: onto the overlay. Skip: during the second-eye replay, the 2D draws and cursor are already on it.
-enum class DrawAction { Draw, Redirect, Skip };
+// Redirect: onto the overlay. RedirectCursor: into the cursor texture. Skip: during the second-eye replay, the 2D
+// draws and cursor are already captured.
+enum class DrawAction { Draw, Redirect, RedirectCursor, Skip };
 DrawAction draw_action(unsigned draw_fbo, unsigned program, bool is_2d);
 void begin_redirect(unsigned draw_fbo);  // bind the overlay target, keep the game's colour blend, coverage alpha
 void end_redirect(unsigned draw_fbo);    // restore the game's blend and framebuffer
+bool begin_cursor_redirect();            // bind the cursor target, viewport shifted onto the hotspot; false = draw as is
+void end_cursor_redirect(unsigned draw_fbo);
 
 // While a frame is replayed for the second eye: no new overlay frame, no identification statistics.
 void set_replaying(bool on);
@@ -42,6 +72,8 @@ struct TestState {
     unsigned overlay_texture;
     unsigned overlay_frames;
     unsigned redirected_draws;
+    unsigned cursor_texture;
+    unsigned cursor_draws;
 };
 TestState test_state();
 

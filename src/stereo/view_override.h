@@ -39,6 +39,7 @@ bool apply_projection_override(const float proj[16], float out[16], bool view_sp
 // The game's own main-camera projection (infinite far plane), remembered for sizing the HUD overlay.
 void note_game_projection(const float proj[16]);
 float game_tan_half_fov_x();
+const float* game_projection();  // the last one seen (column-major), nullptr before the first
 
 // Colour of the on-screen mode square (top-left), or false when nothing is active.
 bool mode_indicator_color(float rgb[3]);

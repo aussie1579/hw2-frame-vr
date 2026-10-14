@@ -1,5 +1,5 @@
 # Removes the HW2 Frame VR proxy from HomeworldRM\Bin\Release and restores any opengl32.dll it backed up.
-# hw2vr.ini and hw2vr.log are kept unless -Purge.
+# hw2vr.ini, hw2vr_panel.ini (saved panel placement) and hw2vr.log are kept unless -Purge.
 # Usage: pwsh -File tools\uninstall.ps1 [-GameDir <...\HomeworldRM\Bin\Release>] [-Purge]
 param([string]$GameDir, [switch]$Purge)
 $ErrorActionPreference = 'Stop'
@@ -34,10 +34,11 @@ if ((Test-Path $openvrBackup) -and -not (Test-Path $openvr)) {
     Rename-Item $openvrBackup 'openvr_api.dll'
     Write-Host "Restored the original openvr_api.dll from $Hw2vrOpenvrBackupName"
 }
+Remove-Item (Join-Path $GameDir 'hw2vr_bindings') -Recurse -Force -ErrorAction SilentlyContinue
 if ($Purge) {
-    foreach ($f in 'hw2vr.ini', 'hw2vr.ini.bak', 'hw2vr.log') { Remove-Item (Join-Path $GameDir $f) -ErrorAction SilentlyContinue }
+    foreach ($f in 'hw2vr.ini', 'hw2vr.ini.bak', 'hw2vr.log', 'hw2vr_panel.ini') { Remove-Item (Join-Path $GameDir $f) -ErrorAction SilentlyContinue }
 }
 Remove-Item $manifest -ErrorAction SilentlyContinue
 
-$left = @('hw2vr.ini', 'hw2vr.log' | Where-Object { Test-Path (Join-Path $GameDir $_) })
+$left = @('hw2vr.ini', 'hw2vr.log', 'hw2vr_panel.ini' | Where-Object { Test-Path (Join-Path $GameDir $_) })
 Write-Host ("HW2 Frame VR removed from $GameDir" + $(if ($left) { " (kept: $($left -join ', '); -Purge removes them)" } else { '' }))

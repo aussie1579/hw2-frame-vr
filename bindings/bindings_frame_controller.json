@@ -1,0 +1,174 @@
+{
+  "action_manifest_version": 0,
+  "controller_type": "frame_controller",
+  "name": "HW2 Frame VR default (Steam Frame)",
+  "description": "Right hand = mouse: laser points, trigger = left click, bumper = right click, stick = zoom, A/B/X/Y/Menu = hotkeys. Left hand = camera: stick orbits, D-pad pans, trigger = Shift, bumper = Ctrl, View and stick click = hotkeys.",
+  "bindings": {
+    "/actions/main": {
+      "poses": [
+        {
+          "output": "/actions/main/in/pointer",
+          "path": "/user/hand/right/pose/tip"
+        }
+      ],
+      "haptics": [
+        {
+          "output": "/actions/main/out/haptic",
+          "path": "/user/hand/right/output/haptic"
+        }
+      ],
+      "sources": [
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/leftclick"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/bumper",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/rightclick"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/thumbstick",
+          "mode": "joystick",
+          "inputs": {
+            "position": {
+              "output": "/actions/main/in/zoom"
+            },
+            "click": {
+              "output": "/actions/main/in/button_right_stick"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/thumbstick",
+          "mode": "joystick",
+          "inputs": {
+            "position": {
+              "output": "/actions/main/in/camera"
+            },
+            "click": {
+              "output": "/actions/main/in/button_left_stick"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/a",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_a"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/b",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_b"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/x",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_x"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/y",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_y"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/menu",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_menu"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/view",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_view"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/dpad_up",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_dpad_up"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/dpad_down",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_dpad_down"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/dpad_left",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_dpad_left"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/dpad_right",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_dpad_right"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_left_trigger"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/bumper",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/main/in/button_left_bumper"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

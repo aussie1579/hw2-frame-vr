@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(hw2vr VERSION 0.5.0 LANGUAGES CXX RC)
+project(hw2vr VERSION 0.6.0 LANGUAGES CXX RC)
 
 # HomeworldRM.exe is 32-bit (docs/FINDINGS.md), so the proxy must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -24,8 +24,15 @@ add_library(hw2vr_proxy SHARED
     src/stereo/frame_replay.cpp
     src/stereo/gl_snapshot.cpp
     src/hud/hud_layer.cpp
+    src/hud/hud_panel.cpp
+    src/input/controls.cpp
+    src/input/input_sim.cpp
+    src/input/key_names.cpp
+    src/input/sprites.cpp
     src/vr/openvr_session.cpp
+    src/vr/overlay.cpp
     src/vr/vr_frame.cpp
+    src/vr/vr_input.cpp
     src/common/log.cpp
     src/common/config.cpp
     src/common/hotkeys.cpp
@@ -40,8 +47,12 @@ target_compile_options(hw2vr_proxy PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /permis
 # No incremental-link thunks: exports should point straight at the stubs/hooks (overlays inline-hook them).
 target_link_options(hw2vr_proxy PRIVATE /INCREMENTAL:NO)
 # Ship the 32-bit OpenVR runtime client next to the proxy (tools/install.ps1 copies both).
+# SteamVR Input actions + default binding (bindings/generate_bindings.py) go in hw2vr_bindings\ next to the proxy.
+file(GLOB HW2VR_BINDINGS ${CMAKE_SOURCE_DIR}/bindings/*.json)
 add_custom_command(TARGET hw2vr_proxy POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${OPENVR_DIR}/bin/win32/openvr_api.dll $<TARGET_FILE_DIR:hw2vr_proxy>)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${OPENVR_DIR}/bin/win32/openvr_api.dll $<TARGET_FILE_DIR:hw2vr_proxy>
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:hw2vr_proxy>/hw2vr_bindings
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HW2VR_BINDINGS} $<TARGET_FILE_DIR:hw2vr_proxy>/hw2vr_bindings)
 
 # Loads the proxy the same way the game does (static import, found in the exe directory). Run: build/win32/<cfg>/hw2vr_smoke.exe
 add_executable(hw2vr_smoke tests/proxy_smoke.cpp)

@@ -2,8 +2,10 @@
 
 #include <windows.h>
 
+#include <cstring>
 #include <initializer_list>
 #include <type_traits>
+#include <vector>
 
 #include "common/log.h"
 #include "proxy/real_gl.h"
@@ -54,6 +56,8 @@ bool load() {
     export_fn(a.TexImage2D, "glTexImage2D");
     export_fn(a.TexParameteri, "glTexParameteri");
     export_fn(a.DrawArrays, "glDrawArrays");
+    export_fn(a.PixelStorei, "glPixelStorei");
+    export_fn(a.ReadPixels, "glReadPixels");
     export_fn(a.Flush, "glFlush");
     export_fn(a.GetError, "glGetError");
     ext_fn(a.ActiveTexture, "glActiveTexture");
@@ -78,10 +82,90 @@ bool load() {
     ext_fn(a.UseProgram, "glUseProgram");
     ext_fn(a.GetUniformLocation, "glGetUniformLocation");
     ext_fn(a.Uniform1i, "glUniform1i");
+    ext_fn(a.Uniform1f, "glUniform1f");
+    ext_fn(a.Uniform2f, "glUniform2f");
+    ext_fn(a.GenerateMipmap, "glGenerateMipmap");
+    ext_fn(a.BindBuffer, "glBindBuffer");
+    ext_fn(a.GenBuffers, "glGenBuffers");
+    ext_fn(a.DeleteBuffers, "glDeleteBuffers");
+    ext_fn(a.BufferData, "glBufferData");
+    ext_fn(a.MapBufferRange, "glMapBufferRange");
+    ext_fn(a.UnmapBuffer, "glUnmapBuffer");
     ext_fn(a.BindSampler, "glBindSampler");
     ext_fn(a.BlendFuncSeparate, "glBlendFuncSeparate");
     g_loaded = ok;
     return ok;
+}
+
+GLuint upload_bgra(GLuint texture, int width, int height, const void* pixels) {
+    const Api& a = g_api;
+    StateGuard guard;
+    GLint unpack_buffer = 0, align = 4, row_length = 0, skip_rows = 0, skip_pixels = 0;
+    a.GetIntegerv(PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+    a.GetIntegerv(UNPACK_ALIGNMENT, &align);
+    a.GetIntegerv(UNPACK_ROW_LENGTH, &row_length);
+    a.GetIntegerv(UNPACK_SKIP_ROWS, &skip_rows);
+    a.GetIntegerv(UNPACK_SKIP_PIXELS, &skip_pixels);
+    a.BindBuffer(PIXEL_UNPACK_BUFFER, 0);
+    a.PixelStorei(UNPACK_ALIGNMENT, 4);
+    a.PixelStorei(UNPACK_ROW_LENGTH, 0);
+    a.PixelStorei(UNPACK_SKIP_ROWS, 0);
+    a.PixelStorei(UNPACK_SKIP_PIXELS, 0);
+
+    if (!texture) a.GenTextures(1, &texture);
+    a.BindTexture(TEXTURE_2D, texture);
+    // GL's first row is the bottom one: upload the image upside down by walking rows in reverse.
+    const auto* rows = static_cast<const unsigned char*>(pixels);
+    std::vector<unsigned char> flipped(static_cast<size_t>(width) * height * 4);
+    for (int y = 0; y < height; ++y)
+        std::memcpy(&flipped[static_cast<size_t>(height - 1 - y) * width * 4], rows + static_cast<size_t>(y) * width * 4,
+                    static_cast<size_t>(width) * 4);
+    a.TexImage2D(TEXTURE_2D, 0, RGBA8, width, height, 0, BGRA, UNSIGNED_BYTE, flipped.data());
+    a.TexParameteri(TEXTURE_2D, TEXTURE_MIN_FILTER, LINEAR);
+    a.TexParameteri(TEXTURE_2D, TEXTURE_MAG_FILTER, LINEAR);
+    a.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_S, CLAMP_TO_EDGE);
+    a.TexParameteri(TEXTURE_2D, TEXTURE_WRAP_T, CLAMP_TO_EDGE);
+
+    a.BindBuffer(PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
+    a.PixelStorei(UNPACK_ALIGNMENT, align);
+    a.PixelStorei(UNPACK_ROW_LENGTH, row_length);
+    a.PixelStorei(UNPACK_SKIP_ROWS, skip_rows);
+    a.PixelStorei(UNPACK_SKIP_PIXELS, skip_pixels);
+    return texture;
+}
+
+GLuint build_program(const char* vertex_source, const char* fragment_source, const char* label) {
+    const Api& a = g_api;
+    auto compile = [&](GLenum type, const char* source) -> GLuint {
+        const GLuint sh = a.CreateShader(type);
+        a.ShaderSource(sh, 1, &source, nullptr);
+        a.CompileShader(sh);
+        GLint ok = 0;
+        a.GetShaderiv(sh, COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[1024] = {};
+            a.GetShaderInfoLog(sh, sizeof log, nullptr, log);
+            HW2VR_LOG("gl: %s %s shader failed to compile: %s", label, type == VERTEX_SHADER ? "vertex" : "fragment", log);
+            a.DeleteShader(sh);
+            return 0;
+        }
+        return sh;
+    };
+    const GLuint vs = compile(VERTEX_SHADER, vertex_source), fs = compile(FRAGMENT_SHADER, fragment_source);
+    if (!vs || !fs) return 0;
+    const GLuint program = a.CreateProgram();
+    a.AttachShader(program, vs);
+    a.AttachShader(program, fs);
+    a.LinkProgram(program);
+    a.DeleteShader(vs);  // flagged; freed with the program
+    a.DeleteShader(fs);
+    GLint ok = 0;
+    a.GetProgramiv(program, LINK_STATUS, &ok);
+    if (!ok) {
+        HW2VR_LOG("gl: %s program failed to link", label);
+        return 0;
+    }
+    return program;
 }
 
 StateGuard::StateGuard() {

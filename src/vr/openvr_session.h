@@ -12,7 +12,7 @@ struct EyeFrustum {
 };
 
 bool start(const std::wstring& dll_dir);  // VR_Init (scene app, seated); logs and returns false on any failure
-void stop();
+void stop();  // destroys every overlay (vr/overlay.h) first
 bool running();
 
 // Blocks until the compositor wants the next frame; returns the HMD pose (column-major, seated tracking space,
@@ -26,11 +26,5 @@ const float* eye_to_head(int eye);     // column-major, metres
 // Submits a GL texture for one eye with the HMD pose it was rendered from (Submit_TextureWithPose), so the
 // compositor reprojects the stale eye correctly under alternating-frame rendering.
 bool submit(int eye, unsigned gl_texture, const float hmd_pose_used[16]);
-
-// The HUD overlay quad.
-bool hud_create(bool premultiplied);
-void hud_set_texture(unsigned gl_texture);
-void hud_place(const float tracking_from_hud[16], float width_m);
-void hud_visible(bool on);
 
 }  // namespace hw2vr::vr

@@ -1,8 +1,11 @@
-// Unit tests for the per-eye camera maths (src/stereo/eye_math.h, src/common/mat4.h). No GL, no headset.
+// Unit tests for the per-eye camera maths (src/stereo/eye_math.h, src/common/mat4.h), the VR panel geometry
+// (src/input/panel_geometry.h) and the laser <-> mouse mapping (src/input/laser_math.h). No GL, no headset.
 #include <cmath>
 #include <cstdio>
 #include <utility>
 
+#include "input/laser_math.h"
+#include "input/panel_geometry.h"
 #include "stereo/eye_math.h"
 
 using namespace hw2vr;
@@ -109,6 +112,87 @@ int main() {
     check(near(ndc(0, 0.9f, -5).second, 1.0f) && near(ndc(0, -1.1f, -5).second, -1.0f), "eye projection: up/down tangents -> NDC y +1/-1");
     check(proj[10] == game[10] && proj[14] == game[14] && proj[11] == -1.0f && proj[15] == 0.0f,
           "eye projection keeps the game's depth row (near 3, infinite far)");
+
+    // --- VR panel geometry ---
+    // Anchor at eye height 1.2 m, turned 30 degrees left (yaw), looking down 20 degrees (pitch must not tip the panel).
+    float anchor[16], tilt[16];
+    mat4::rotation_y(30.0f * kDeg, a);
+    rotation_x(-20.0f * kDeg, tilt);
+    mat4::multiply(a, tilt, anchor);
+    anchor[13] = 1.2f;
+    const Vec3 eye = position(anchor);
+    const Vec3 fwd{-std::sin(30.0f * kDeg), 0.0f, -std::cos(30.0f * kDeg)};
+    for (const float curvature : {0.0f, 0.18f, 0.4f}) {
+        const input::PanelGeometry g = input::PanelGeometry::in_front(anchor, 1.8f, 0.0f, 0.0f, 2.0f, 0.42f, curvature);
+        char what[160];
+        std::snprintf(what, sizeof what, "panel (curvature %.2f): centre 1.8 m along the level heading, facing the eye", curvature);
+        check(near(g.centre.x, eye.x + fwd.x * 1.8f, 1e-4f) && near(g.centre.y, 1.2f) && near(g.centre.z, fwd.z * 1.8f, 1e-4f) &&
+                  near(dot(g.normal, fwd), -1.0f) && near(g.up.y, 1.0f),
+              what);
+        // Rays from the eye at known surface points must come back with those uvs, top-left origin.
+        bool all = true, oriented = true;
+        for (const float u : {0.05f, 0.3f, 0.5f, 0.77f, 0.95f})
+            for (const float v : {0.1f, 0.5f, 0.9f}) {
+                const Vec3 target = g.point_at(u, v);
+                float uv[2], dist;
+                if (!g.intersect(eye, normalize(target - eye), uv, &dist) || !near(uv[0], u, 1e-3f) ||
+                    !near(uv[1], v, 1e-3f) || !near(dist, length(target - eye), 1e-3f))
+                    all = false;
+                if (u < 0.5f && dot(target - g.centre, g.right) >= 0.0f) oriented = false;  // u grows to the right
+                if (v < 0.5f && target.y <= g.centre.y) oriented = false;                    // v grows downwards
+            }
+        std::snprintf(what, sizeof what, "panel (curvature %.2f): ray hits return the surface uv and distance", curvature);
+        check(all, what);
+        std::snprintf(what, sizeof what, "panel (curvature %.2f): uv (0,0) is top-left as seen from the eye", curvature);
+        check(oriented, what);
+        float uv[2], dist;
+        std::snprintf(what, sizeof what, "panel (curvature %.2f): rays past the edge or from behind miss", curvature);
+        check(!g.intersect(eye, normalize(g.point_at(1.02f, 0.5f) - eye), uv, &dist) &&
+                  !g.intersect(eye, normalize(g.point_at(0.5f, -0.05f) - eye), uv, &dist) &&
+                  !g.intersect(eye + fwd * 4.0f, -fwd, uv, &dist),
+              what);
+    }
+    {
+        const input::PanelGeometry centred =
+            input::PanelGeometry::in_front(anchor, 1.8f, 0.0f, 0.0f, 1.8f * 65.0f * kDeg, 0.42f, 65.0f / 360.0f);
+        bool equidistant = true;
+        for (const float u : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
+            if (!near(length(centred.point_at(u, 0.5f) - eye), 1.8f, 1e-3f)) equidistant = false;
+        check(equidistant, "panel curved round the viewer (curvature = degrees / 360): every column 1.8 m away");
+        float d, side, h;
+        input::PanelGeometry::relative(anchor, centred.centre + Vec3{0, 0.3f, 0}, &d, &side, &h);
+        check(near(d, 1.8f) && near(side, 0.0f, 1e-3f) && near(h, 0.3f), "panel: relative() inverts in_front()");
+        const int px = centred.pixels_across(eye, 20.0f);
+        check(px >= 1299 && px <= 1301, "panel: 65 degrees wide at 20 px/degree -> ~1300 texture pixels");
+    }
+
+    // --- Laser -> mouse in the world: the game projection of the laser direction, and back ---
+    {
+        const float game_proj[16] = {0.5978f, 0, 0, 0, 0, 1.428f, 0, 0, 0, 0, -1, -1, 0, 0, -6, 0};
+        float px, py;
+        check(input::project_direction(game_proj, {0, 0, -1}, 3440, 1440, &px, &py) && near(px, 1720.0f) && near(py, 720.0f),
+              "laser straight ahead -> window centre");
+        check(input::project_direction(game_proj, normalize(Vec3{1.0f / 0.5978f, 0, -1}), 3440, 1440, &px, &py) &&
+                  near(px, 3440.0f, 1e-3f),
+              "laser at the game's horizontal half-FOV -> right edge");
+        input::project_direction(game_proj, normalize(Vec3{0, 0.35f, -1}), 3440, 1440, &px, &py);
+        check(py < 720.0f, "laser up -> cursor up (y grows downwards)");
+        check(!input::project_direction(game_proj, {0, 0, 1}, 3440, 1440, &px, &py), "laser behind the camera -> no pixel");
+        const Vec3 back = normalize(input::unproject_pixel(game_proj, 2500.0f, 300.0f, 3440, 1440));
+        input::project_direction(game_proj, back, 3440, 1440, &px, &py);
+        check(near(px, 2500.0f, 1e-3f) && near(py, 300.0f, 1e-3f), "unproject_pixel inverts project_direction");
+        float cx = 3500.0f, cy = 700.0f;
+        check(!input::clamp_inside(&cx, &cy, 3440, 1440, 0.02f) && near(cx, 3439.0f - 0.02f * 3440) && near(cy, 700.0f),
+              "aim outside the window is kept off the edge-pan zone");
+        // Through a yawed recentre pose: a laser along the recentred heading lands in the centre.
+        float camera_pose[16], camera_inverse[16];
+        mat4::rotation_y(30.0f * kDeg, camera_pose);
+        camera_pose[13] = 1.2f;
+        mat4::rigid_inverse(camera_pose, camera_inverse);
+        check(input::project_direction(game_proj, rotate(camera_inverse, fwd), 3440, 1440, &px, &py) &&
+                  near(px, 1720.0f, 1e-3f) && near(py, 720.0f, 1e-3f),
+              "laser along the recentred heading -> window centre");
+    }
 
     std::printf("%s: %d failure(s)\n", g_failures ? "FAILED" : "PASSED", g_failures);
     return g_failures ? 1 : 0;

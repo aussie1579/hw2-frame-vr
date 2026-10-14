@@ -6,6 +6,8 @@
 #include "common/log.h"
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
+#include "hud/hud_panel.h"
+#include "input/controls.h"
 #include "proxy/gl_api.h"
 #include "proxy/gl_hooks.h"
 #include "stereo/eye_math.h"
@@ -27,7 +29,11 @@ bool g_eye_valid[2] = {};
 bool g_recentre = false;          // recentre on the next pose (F10, or the headset was just put on)
 bool g_was_in_use = false;
 float g_recentre_inverse[16];     // identity = SteamVR's seated origin until we recentre
-bool g_hud_shown = false;
+float g_camera_pose[16];          // its inverse: the seated pose of the game camera
+
+HWND g_window = nullptr;
+int g_client_w = 0, g_client_h = 0;
+long long g_last_input_qpc = 0;
 
 int g_width = 0, g_height = 0;
 gl::GLuint g_eye_tex[2] = {}, g_eye_fbo[2] = {};
@@ -83,19 +89,21 @@ void start_vr() {
         HW2VR_LOG("vr: GL entry points missing - staying flat");
         return;
     }
-    HW2VR_LOG("vr: starting (world scale %.0f units/m, HUD %.1f m, HUD scale %.2f). Single-player/skirmish only!",
-              g_settings.world_scale, g_settings.hud_distance, g_settings.hud_scale);
+    HW2VR_LOG("vr: starting (world scale %.0f units/m). Single-player/skirmish only!", g_settings.world_scale);
     if (!vr::start(g_dll_dir)) return;
-    vr::hud_create(g_settings.hud_premultiplied);
     hud::set_capture(true, g_settings.hud_premultiplied);
+    panel::start();
+    controls::start((g_dll_dir + L"hw2vr_bindings\\action_manifest.json").c_str());
     g_recentre = false;
     g_was_in_use = false;  // if the headset is already on, the first pose recentres
     g_have_pose = false;
-    g_hud_shown = false;
+    g_last_input_qpc = 0;
     g_eye_valid[0] = g_eye_valid[1] = false;
 }
 
 void stop_vr() {
+    controls::stop();
+    panel::stop();
     stereo::clear_vr_eye();
     hud::set_capture(false, g_settings.hud_premultiplied);
     hud::release();
@@ -104,23 +112,15 @@ void stop_vr() {
     g_have_pose = false;
 }
 
-void place_hud(const float hmd[16]) {
-    // Oriented like the game camera (the recentre pose) and sized to the game's own horizontal field of view, so
-    // markers the game positions on the CPU line up with their ships. With hud_follow_head it also sits at the
-    // head's current position: the panel is far closer than the (world-scaled) ships, so leaning or sitting
-    // somewhere else would otherwise slide the markers off them.
-    float game_camera[16], offset[16], hud_pose[16];
-    mat4::rigid_inverse(g_recentre_inverse, game_camera);
-    if (g_settings.hud_follow_head) {
-        game_camera[12] = hmd[12];
-        game_camera[13] = hmd[13];
-        game_camera[14] = hmd[14];
-    }
-    mat4::translation(0.0f, 0.0f, -g_settings.hud_distance, offset);
-    mat4::multiply(game_camera, offset, hud_pose);
-    vr::hud_place(hud_pose, g_settings.hud_scale * 2.0f * g_settings.hud_distance * stereo::game_tan_half_fov_x());
-    if (!g_hud_shown) vr::hud_visible(true);
-    g_hud_shown = true;
+void recentred() {
+    mat4::rigid_inverse(g_recentre_inverse, g_camera_pose);
+    panel::recentre(g_camera_pose);  // the panel sits in front of the game camera's direction
+}
+
+void change_world_scale(int steps) {
+    for (; steps > 0; --steps) g_settings.world_scale *= 1.25f;
+    for (; steps < 0; ++steps) g_settings.world_scale *= 0.8f;
+    HW2VR_LOG("vr: world scale %.1f game units per metre", g_settings.world_scale);
 }
 
 void handle_hotkeys() {
@@ -134,10 +134,29 @@ void handle_hotkeys() {
         HW2VR_LOG("vr: recentre");
     }
     const bool scale_up = hotkeys::pressed(g_settings.key_scale_up), scale_down = hotkeys::pressed(g_settings.key_scale_down);
-    if (scale_up || scale_down) {
-        g_settings.world_scale *= scale_up ? 1.25f : 0.8f;
-        HW2VR_LOG("vr: world scale %.1f game units per metre", g_settings.world_scale);
+    if (scale_up || scale_down) change_world_scale(scale_up ? 1 : -1);
+}
+
+// The controllers, once per frame with the new poses.
+void update_controls(const float hmd[16]) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    const double dt = g_last_input_qpc ? double(now.QuadPart - g_last_input_qpc) / double(g_qpf.QuadPart) : 0.0;
+    g_last_input_qpc = now.QuadPart;
+    controls::Frame f;
+    f.window = g_window;
+    f.client_w = g_client_w;
+    f.client_h = g_client_h;
+    f.hmd = hmd;
+    f.camera_pose = g_camera_pose;
+    f.game_projection = stereo::game_projection();
+    f.dt = dt > 0.1 ? 0.1 : dt;  // a hitch must not fling the camera
+    const controls::Requests req = controls::update(f);
+    if (req.recentre) {
+        g_recentre = true;
+        HW2VR_LOG("vr: recentre (controller)");
     }
+    if (req.world_scale_steps) change_world_scale(req.world_scale_steps);
 }
 
 
@@ -189,6 +208,7 @@ void configure(const Settings& settings, const std::wstring& dll_dir) {
     g_dll_dir = dll_dir;
     g_autostart_pending = settings.autostart;
     mat4::identity(g_recentre_inverse);
+    mat4::identity(g_camera_pose);
     QueryPerformanceFrequency(&g_qpf);
 }
 
@@ -200,7 +220,10 @@ void before_swap(HDC dc) {
     if (!vr::running()) return;
 
     RECT rc;
-    if (!GetClientRect(WindowFromDC(dc), &rc) || rc.right <= 0 || rc.bottom <= 0) return;
+    g_window = WindowFromDC(dc);
+    if (!GetClientRect(g_window, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
+    g_client_w = rc.right;
+    g_client_h = rc.bottom;
     if (!ensure_targets(rc.right, rc.bottom)) return;
 
     if (g_have_pose) {
@@ -233,7 +256,8 @@ void before_swap(HDC dc) {
             if (g_eye_valid[eye]) vr::submit(eye, g_eye_tex[eye], g_pose_used[eye]);
         telemetry(replayed, replay_ms);
     }
-    if (hud::overlay_ready()) vr::hud_set_texture(hud::overlay_texture());
+    panel::update_texture(g_frame_pose, static_cast<float>(g_client_h) / static_cast<float>(g_client_w));
+    controls::before_swap();
 }
 
 void after_swap() {
@@ -253,8 +277,11 @@ void after_swap() {
     if (g_recentre) {
         stereo::recentre_inverse_from(hmd, g_recentre_inverse);
         g_recentre = false;
+        recentred();
+    } else if (!panel::placed()) {
+        recentred();  // not recentred yet (headset not worn): SteamVR's seated origin
     }
-    place_hud(hmd);
+    update_controls(hmd);
     for (int eye = 0; eye < 2; ++eye) {
         stereo::eye_from_game_camera(hmd, g_recentre_inverse, vr::eye_to_head(eye), g_settings.world_scale, g_eye_view[eye]);
         const vr::EyeFrustum& f = vr::frustum(eye);

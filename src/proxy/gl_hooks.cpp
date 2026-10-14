@@ -245,6 +245,14 @@ void game_draw(Draw draw) {
             draw();
             hw2vr::hud::end_redirect(g_draw_fbo);
             break;
+        case hw2vr::hud::DrawAction::RedirectCursor:
+            if (!hw2vr::hud::begin_cursor_redirect()) {
+                draw();
+                break;
+            }
+            draw();
+            hw2vr::hud::end_cursor_redirect(g_draw_fbo);
+            break;
         case hw2vr::hud::DrawAction::Skip:
             break;
     }
@@ -319,6 +327,12 @@ extern "C" void WINAPI hook_glDrawElements(GLenum mode, GLsizei count, GLenum ty
 
 extern "C" __declspec(dllexport) hw2vr::hud::TestState hw2vr_test_state() { return hw2vr::hud::test_state(); }
 extern "C" __declspec(dllexport) hw2vr::replay::Stats hw2vr_replay_stats() { return hw2vr::replay::stats(); }
+extern "C" __declspec(dllexport) void hw2vr_test_set_cursor(int x, int y) { hw2vr::hud::set_cursor_override(x, y); }
+// The panel filter on its own, for tests: the current overlay filtered to width x height (GL texture, 0 = none).
+extern "C" __declspec(dllexport) unsigned hw2vr_test_build_panel(int width, int height) {
+    return hw2vr::hud::build_panel_texture(width, height);
+}
+extern "C" __declspec(dllexport) int hw2vr_test_ui_at(float u, float v) { return hw2vr::hud::ui_at(u, v); }
 
 namespace {
 
@@ -344,6 +358,7 @@ extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
     hw2vr::replay::end_recording();  // the frame's GL stream is complete
     hw2vr::gl::load();               // first call only; needs the game's context, which is current here
     if (RECT rc; GetClientRect(WindowFromDC(dc), &rc)) hw2vr::hud::set_target_size(rc.right, rc.bottom);
+    hw2vr::hud::set_window(WindowFromDC(dc));
     hw2vr::hotkeys::log_seen_keys();
     hw2vr::stereo::on_frame();
     hw2vr::vrframe::before_swap(dc);  // captures/replays/submits the eyes in VR
