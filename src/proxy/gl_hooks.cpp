@@ -46,6 +46,8 @@ using PFN_glUseProgram = void(APIENTRY*)(GLuint);
 using PFN_glLinkProgram = void(APIENTRY*)(GLuint);
 using PFN_glDeleteProgram = void(APIENTRY*)(GLuint);
 using PFN_glBindFramebuffer = void(APIENTRY*)(GLenum, GLuint);
+using PFN_glDrawArrays = void(APIENTRY*)(GLenum, GLint, GLsizei);
+using PFN_glDrawElements = void(APIENTRY*)(GLenum, GLsizei, GLenum, const void*);
 
 PFN_wglGetProcAddress real_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers real_wglSwapBuffers = nullptr;
@@ -55,6 +57,8 @@ PFN_glUseProgram real_glUseProgram = nullptr;
 PFN_glLinkProgram real_glLinkProgram = nullptr;
 PFN_glDeleteProgram real_glDeleteProgram = nullptr;
 PFN_glBindFramebuffer real_glBindFramebuffer = nullptr;
+PFN_glDrawArrays real_glDrawArrays = nullptr;      // GL 1.1 exports, resolved in init_hooks
+PFN_glDrawElements real_glDrawElements = nullptr;
 
 struct ProgramInfo {
     GLint loc_view = -1;  // inMatV
@@ -171,6 +175,17 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
     real_glUniformMatrix4fv(loc, count, transpose, value);
 }
 
+// Every game draw: note UI programs, and send UI drawn to the screen after the HUD capture (the mouse cursor) onto
+// the HUD overlay instead (hud_layer.h).
+template <class Draw>
+void game_draw(Draw draw) {
+    hw2vr::hud::note_draw(g_draw_fbo, g_current_program);
+    if (!hw2vr::hud::should_redirect(g_draw_fbo, g_current_program)) return draw();
+    hw2vr::hud::begin_redirect();
+    draw();
+    hw2vr::hud::end_redirect();
+}
+
 // Paints a 24 px square in the window's top-left corner on the default framebuffer (spike / VR status).
 void draw_mode_indicator(HDC dc, const float rgb[3]) {
     constexpr int kSize = 24, kMargin = 8;
@@ -216,7 +231,19 @@ extern "C" PROC WINAPI hook_wglGetProcAddress(LPCSTR name) {
     return proc;
 }
 
+extern "C" void WINAPI hook_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
+    game_draw([&] { real_glDrawArrays(mode, first, count); });
+}
+
+extern "C" void WINAPI hook_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+    game_draw([&] { real_glDrawElements(mode, count, type, indices); });
+}
+
+extern "C" __declspec(dllexport) hw2vr::hud::TestState hw2vr_test_state() { return hw2vr::hud::test_state(); }
+
 extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
+    hw2vr::gl::load();  // first call only; needs the game's context, which is current here
+    if (RECT rc; GetClientRect(WindowFromDC(dc), &rc)) hw2vr::hud::set_target_size(rc.right, rc.bottom);
     hw2vr::hotkeys::log_seen_keys();
     hw2vr::stereo::on_frame();
     hw2vr::vrframe::before_swap(dc);
@@ -232,8 +259,10 @@ bool init_hooks() {
     HMODULE gl = real_opengl32();
     real_wglGetProcAddress = reinterpret_cast<PFN_wglGetProcAddress>(GetProcAddress(gl, "wglGetProcAddress"));
     real_wglSwapBuffers = reinterpret_cast<PFN_wglSwapBuffers>(GetProcAddress(gl, "wglSwapBuffers"));
-    if (!real_wglGetProcAddress || !real_wglSwapBuffers) {
-        HW2VR_LOG("FATAL: real wglGetProcAddress/wglSwapBuffers not found");
+    real_glDrawArrays = reinterpret_cast<PFN_glDrawArrays>(GetProcAddress(gl, "glDrawArrays"));
+    real_glDrawElements = reinterpret_cast<PFN_glDrawElements>(GetProcAddress(gl, "glDrawElements"));
+    if (!real_wglGetProcAddress || !real_wglSwapBuffers || !real_glDrawArrays || !real_glDrawElements) {
+        HW2VR_LOG("FATAL: a hooked export (wglGetProcAddress/wglSwapBuffers/glDrawArrays/glDrawElements) is missing");
         return false;
     }
     return true;

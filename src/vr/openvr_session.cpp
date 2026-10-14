@@ -133,6 +133,11 @@ bool wait_poses(float hmd_pose[16]) {
     return true;
 }
 
+bool hmd_in_use() {
+    return g_system &&
+           g_system->GetTrackedDeviceActivityLevel(::vr::k_unTrackedDeviceIndex_Hmd) == ::vr::k_EDeviceActivityLevel_UserInteraction;
+}
+
 const EyeFrustum& frustum(int eye) { return g_frustum[eye & 1]; }
 const float* eye_to_head(int eye) { return g_eye_to_head[eye & 1]; }
 

@@ -18,6 +18,8 @@ bool running();
 // Blocks until the compositor wants the next frame; returns the HMD pose (column-major, seated tracking space,
 // metres) or false if tracking is lost.
 bool wait_poses(float hmd_pose[16]);
+// True while someone is wearing the headset (proximity sensor / activity level "user interaction").
+bool hmd_in_use();
 const EyeFrustum& frustum(int eye);    // 0 = left, 1 = right
 const float* eye_to_head(int eye);     // column-major, metres
 

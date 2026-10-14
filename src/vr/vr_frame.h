@@ -16,6 +16,7 @@ struct Settings {
     float hud_distance = 3.0f;     // metres from the recentre point
     float hud_scale = 1.0f;        // 1 = HUD spans the game's own field of view, so screen-space markers sit on ships
     bool hud_premultiplied = true;
+    bool hud_follow_head = true;   // HUD sits at the head's position (orientation stays with the game camera)
     int key_toggle = VK_F8, key_recentre = VK_F10, key_scale_up = VK_PRIOR, key_scale_down = VK_NEXT;  // Ctrl+Shift+
 };
 

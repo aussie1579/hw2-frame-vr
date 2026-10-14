@@ -6,6 +6,7 @@
 #include "common/hotkeys.h"
 #include "common/log.h"
 #include "common/version.h"
+#include "hud/hud_layer.h"
 #include "proxy/gl_hooks.h"
 #include "proxy/real_gl.h"
 #include "stereo/view_override.h"
@@ -39,11 +40,16 @@ bool init(HMODULE self) {
     vr.hud_distance = cfg.vr_hud_distance;
     vr.hud_scale = cfg.vr_hud_scale;
     vr.hud_premultiplied = cfg.vr_hud_premultiplied;
+    vr.hud_follow_head = cfg.vr_hud_follow_head;
     vr.key_toggle = cfg.key_vr_toggle;
     vr.key_recentre = cfg.key_recentre;
     vr.key_scale_up = cfg.key_scale_up;
     vr.key_scale_down = cfg.key_scale_down;
     hw2vr::vrframe::configure(vr, dir);  // VR itself starts on the render thread (hotkey or autostart)
+    if (cfg.debug_hud_capture) {
+        hw2vr::hud::set_capture(true, cfg.vr_hud_premultiplied);
+        HW2VR_LOG("debug: HUD capture forced on without VR");
+    }
     using hw2vr::hotkeys::key_name;
     HW2VR_LOG("hotkeys (Ctrl+Shift+): %s VR on/off%s, %s recentre, %s/%s world scale, %s flat camera spike",
               key_name(cfg.key_vr_toggle), cfg.vr_autostart ? " (autostart on)" : "", key_name(cfg.key_recentre),

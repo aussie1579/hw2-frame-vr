@@ -29,6 +29,12 @@ foreach ($mode in 'off', 'yaw+offset') {
     & (Join-Path $out 'hw2vr_smoke.exe')
     if ($LASTEXITCODE) { $failed++ }
 }
+# HUD pipeline without VR: capture + alpha conversion + clear + cursor redirect, read back from the textures.
+Set-Content $ini "[debug]`r`nhud_capture = 1`r`n" -Encoding ascii
+Write-Host "`n=== smoke test, HUD pipeline (forced capture, no VR) ===" -ForegroundColor Cyan
+& (Join-Path $out 'hw2vr_smoke.exe')
+if ($LASTEXITCODE) { $failed++ }
+
 # VR autostart: with a headset (SteamVR running) VR must start; without one the proxy must fall back to flat
 # cleanly. Either way every GL check must still pass.
 Set-Content $ini "[vr]`r`nautostart = 1`r`n" -Encoding ascii

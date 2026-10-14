@@ -13,13 +13,15 @@ namespace {
 
 Api g_api = {};
 bool g_loaded = false;
+bool g_attempted = false;  // one attempt only, so a failure is logged once rather than every frame
 
 }  // namespace
 
 const Api& api() { return g_api; }
 
 bool load() {
-    if (g_loaded) return true;
+    if (g_attempted) return g_loaded;
+    g_attempted = true;
     HMODULE module = proxy::real_opengl32();
     using PFN_wglGetProcAddress = PROC(WINAPI*)(LPCSTR);
     auto wgl_get = reinterpret_cast<PFN_wglGetProcAddress>(GetProcAddress(module, "wglGetProcAddress"));
@@ -77,6 +79,7 @@ bool load() {
     ext_fn(a.GetUniformLocation, "glGetUniformLocation");
     ext_fn(a.Uniform1i, "glUniform1i");
     ext_fn(a.BindSampler, "glBindSampler");
+    ext_fn(a.BlendFuncSeparate, "glBlendFuncSeparate");
     g_loaded = ok;
     return ok;
 }

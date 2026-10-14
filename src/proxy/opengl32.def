@@ -73,9 +73,9 @@ EXPORTS
     glDepthRange = stub_glDepthRange
     glDisable = stub_glDisable
     glDisableClientState = stub_glDisableClientState
-    glDrawArrays = stub_glDrawArrays
+    glDrawArrays = hook_glDrawArrays
     glDrawBuffer = stub_glDrawBuffer
-    glDrawElements = stub_glDrawElements
+    glDrawElements = hook_glDrawElements
     glDrawPixels = stub_glDrawPixels
     glEdgeFlag = stub_glEdgeFlag
     glEdgeFlagPointer = stub_glEdgeFlagPointer

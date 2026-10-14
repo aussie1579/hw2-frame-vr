@@ -62,6 +62,7 @@ struct Api {
     GLint(HW2VR_APIENTRY* GetUniformLocation)(GLuint, const GLchar*);
     void(HW2VR_APIENTRY* Uniform1i)(GLint, GLint);
     void(HW2VR_APIENTRY* BindSampler)(GLuint, GLuint);
+    void(HW2VR_APIENTRY* BlendFuncSeparate)(GLenum, GLenum, GLenum, GLenum);
 };
 #undef HW2VR_APIENTRY
 

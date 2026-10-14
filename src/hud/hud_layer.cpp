@@ -1,6 +1,7 @@
 #include "hud/hud_layer.h"
 
 #include <unordered_map>
+#include <unordered_set>
 
 #include "common/log.h"
 #include "proxy/gl_api.h"
@@ -18,6 +19,10 @@ unsigned g_candidate = 0, g_candidate_streak = 0, g_frames_without = 0;
 
 bool g_capture = false, g_premultiplied = true, g_captured = false;
 int g_width = 0, g_height = 0;
+std::unordered_set<unsigned> g_ui_programs;  // drew into the HUD framebuffer this frame
+unsigned g_captures = 0, g_redirected = 0;
+gl::GLint g_saved_blend[4];
+gl::GLboolean g_saved_blend_on = 0;
 gl::GLuint g_raw_tex = 0, g_raw_fbo = 0, g_out_tex = 0, g_out_fbo = 0, g_program = 0, g_vao = 0;
 int g_tex_width = 0, g_tex_height = 0;
 
@@ -126,6 +131,7 @@ void capture(unsigned hud_fbo) {
     a.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     a.Clear(gl::COLOR_BUFFER_BIT);
     g_captured = true;
+    ++g_captures;
 }
 
 }  // namespace
@@ -153,6 +159,7 @@ void end_frame() {
     for (const auto& [fbo, count] : g_ortho_counts)
         if (fbo != 0 && count > best) winner = fbo, best = count;
     g_ortho_counts.clear();
+    g_ui_programs.clear();
     g_captured = false;
 
     if (best < kMinOrthoUploads) winner = 0;
@@ -174,6 +181,40 @@ void end_frame() {
 
 bool captured_this_frame() { return g_captured; }
 unsigned overlay_texture() { return g_out_tex; }
+
+void note_draw(unsigned draw_fbo, unsigned program) {
+    if (is_hud_fbo(draw_fbo)) g_ui_programs.insert(program);
+}
+
+bool should_redirect(unsigned draw_fbo, unsigned program) {
+    return g_capture && g_captured && g_premultiplied && draw_fbo == 0 && g_ui_programs.count(program) != 0;
+}
+
+void begin_redirect() {
+    constexpr gl::GLenum kSrcRgb = 0x80C9, kDstRgb = 0x80C8, kSrcAlpha = 0x80CB, kDstAlpha = 0x80CA, kOne = 1,
+                         kOneMinusSrcAlpha = 0x0303;
+    const gl::Api& a = gl::api();
+    a.GetIntegerv(kSrcRgb, &g_saved_blend[0]);
+    a.GetIntegerv(kDstRgb, &g_saved_blend[1]);
+    a.GetIntegerv(kSrcAlpha, &g_saved_blend[2]);
+    a.GetIntegerv(kDstAlpha, &g_saved_blend[3]);
+    g_saved_blend_on = a.IsEnabled(gl::BLEND);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_out_fbo);
+    // The game's alpha factors write transmittance; the overlay holds coverage.
+    a.BlendFuncSeparate(static_cast<gl::GLenum>(g_saved_blend[0]), static_cast<gl::GLenum>(g_saved_blend[1]), kOne,
+                        kOneMinusSrcAlpha);
+    ++g_redirected;
+}
+
+void end_redirect() {
+    const gl::Api& a = gl::api();
+    a.BlendFuncSeparate(static_cast<gl::GLenum>(g_saved_blend[0]), static_cast<gl::GLenum>(g_saved_blend[1]),
+                        static_cast<gl::GLenum>(g_saved_blend[2]), static_cast<gl::GLenum>(g_saved_blend[3]));
+    g_saved_blend_on ? a.Enable(gl::BLEND) : a.Disable(gl::BLEND);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+}
+
+TestState test_state() { return {g_hud_fbo, g_out_tex, g_captures, g_redirected}; }
 
 void release() {
     const gl::Api& a = gl::api();

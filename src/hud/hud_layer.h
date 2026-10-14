@@ -22,4 +22,21 @@ bool captured_this_frame();
 unsigned overlay_texture();  // GL texture ready for the VR overlay
 void release();              // delete GL objects (VR off)
 
+// UI the game draws straight to the screen *after* the HUD composite (the software mouse cursor) belongs on the
+// overlay too. Programs that drew into the HUD framebuffer this frame count as UI programs; their later draws into
+// the default framebuffer are redirected into the overlay texture.
+void note_draw(unsigned draw_fbo, unsigned program);  // every draw, before it runs
+bool should_redirect(unsigned draw_fbo, unsigned program);
+void begin_redirect();  // bind the overlay target, keep the game's colour blend, accumulate coverage alpha
+void end_redirect();
+
+// For tests/proxy_smoke.cpp (exported from the DLL as hw2vr_test_state).
+struct TestState {
+    unsigned hud_fbo;
+    unsigned overlay_texture;
+    unsigned captures;
+    unsigned redirected_draws;
+};
+TestState test_state();
+
 }  // namespace hw2vr::hud

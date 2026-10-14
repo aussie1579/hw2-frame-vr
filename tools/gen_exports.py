@@ -9,7 +9,7 @@ import struct
 import sys
 from pathlib import Path
 
-HOOKED = {"wglGetProcAddress", "wglSwapBuffers"}
+HOOKED = {"wglGetProcAddress", "wglSwapBuffers", "glDrawArrays", "glDrawElements"}
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DLL = Path(r"C:\Windows\SysWOW64\opengl32.dll")

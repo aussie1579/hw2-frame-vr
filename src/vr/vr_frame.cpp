@@ -22,10 +22,10 @@ int g_eye = 0;                    // eye the game is rendering this frame
 bool g_have_pose = false;         // a camera was set for the current frame
 float g_pose_used[2][16];         // HMD pose each eye's texture was rendered from
 bool g_eye_valid[2] = {};
-bool g_recentre = true;
-float g_recentre_inverse[16];
-bool g_hud_placed = false;
-float g_hud_tan = 0.0f;
+bool g_recentre = false;          // recentre on the next pose (F10, or the headset was just put on)
+bool g_was_in_use = false;
+float g_recentre_inverse[16];     // identity = SteamVR's seated origin until we recentre
+bool g_hud_shown = false;
 
 int g_width = 0, g_height = 0;
 gl::GLuint g_eye_tex[2] = {}, g_eye_fbo[2] = {};
@@ -76,9 +76,10 @@ void start_vr() {
     if (!vr::start(g_dll_dir)) return;
     vr::hud_create(g_settings.hud_premultiplied);
     hud::set_capture(true, g_settings.hud_premultiplied);
-    g_recentre = true;
+    g_recentre = false;
+    g_was_in_use = false;  // if the headset is already on, the first pose recentres
     g_have_pose = false;
-    g_hud_placed = false;
+    g_hud_shown = false;
     g_eye_valid[0] = g_eye_valid[1] = false;
 }
 
@@ -91,17 +92,23 @@ void stop_vr() {
     g_have_pose = false;
 }
 
-void place_hud() {
-    // Fixed in the game camera's frame (= the recentre pose), sized to the game's own horizontal field of view so
-    // CPU-positioned markers line up with their ships from the centre of the head.
+void place_hud(const float hmd[16]) {
+    // Oriented like the game camera (the recentre pose) and sized to the game's own horizontal field of view, so
+    // markers the game positions on the CPU line up with their ships. With hud_follow_head it also sits at the
+    // head's current position: the panel is far closer than the (world-scaled) ships, so leaning or sitting
+    // somewhere else would otherwise slide the markers off them.
     float game_camera[16], offset[16], hud_pose[16];
     mat4::rigid_inverse(g_recentre_inverse, game_camera);
+    if (g_settings.hud_follow_head) {
+        game_camera[12] = hmd[12];
+        game_camera[13] = hmd[13];
+        game_camera[14] = hmd[14];
+    }
     mat4::translation(0.0f, 0.0f, -g_settings.hud_distance, offset);
     mat4::multiply(game_camera, offset, hud_pose);
-    g_hud_tan = stereo::game_tan_half_fov_x();
-    vr::hud_place(hud_pose, g_settings.hud_scale * 2.0f * g_settings.hud_distance * g_hud_tan);
-    vr::hud_visible(true);
-    g_hud_placed = true;
+    vr::hud_place(hud_pose, g_settings.hud_scale * 2.0f * g_settings.hud_distance * stereo::game_tan_half_fov_x());
+    if (!g_hud_shown) vr::hud_visible(true);
+    g_hud_shown = true;
 }
 
 void handle_hotkeys() {
@@ -136,7 +143,6 @@ void before_swap(HDC dc) {
 
     RECT rc;
     if (!GetClientRect(WindowFromDC(dc), &rc) || rc.right <= 0 || rc.bottom <= 0) return;
-    hud::set_target_size(rc.right, rc.bottom);
     if (!ensure_targets(rc.right, rc.bottom)) return;
 
     if (g_have_pose) {
@@ -154,7 +160,6 @@ void before_swap(HDC dc) {
             if (g_eye_valid[eye]) vr::submit(eye, g_eye_tex[eye], g_pose_used[eye]);
     }
     if (hud::captured_this_frame()) vr::hud_set_texture(hud::overlay_texture());
-    if (!g_hud_placed || g_hud_tan != stereo::game_tan_half_fov_x()) place_hud();
 }
 
 void after_swap() {
@@ -165,11 +170,17 @@ void after_swap() {
         g_have_pose = false;  // tracking lost: keep rendering, skip submitting until it returns
         return;
     }
+    const bool in_use = vr::hmd_in_use();
+    if (in_use && !g_was_in_use) {
+        g_recentre = true;
+        HW2VR_LOG("vr: headset put on - recentring");
+    }
+    g_was_in_use = in_use;
     if (g_recentre) {
         stereo::recentre_inverse_from(hmd, g_recentre_inverse);
         g_recentre = false;
-        g_hud_placed = false;
     }
+    place_hud(hmd);
     g_eye ^= 1;
     float e[16];
     stereo::eye_from_game_camera(hmd, g_recentre_inverse, vr::eye_to_head(g_eye), g_settings.world_scale, e);
