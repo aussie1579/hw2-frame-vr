@@ -17,121 +17,51 @@ std::unordered_map<unsigned, unsigned> g_ortho_counts;  // draw fbo -> ortho inM
 unsigned g_hud_fbo = 0;                                 // 0 = not identified
 unsigned g_candidate = 0, g_candidate_streak = 0, g_frames_without = 0;
 
-bool g_capture = false, g_premultiplied = true, g_captured = false;
+bool g_capture = false, g_premultiplied = true;
+bool g_ready = false;  // overlay target cleared for this frame (the game has entered its HUD pass)
 int g_width = 0, g_height = 0;
-std::unordered_set<unsigned> g_ui_programs;  // drew into the HUD framebuffer this frame
-unsigned g_captures = 0, g_redirected = 0;
-gl::GLint g_saved_blend[4];
-gl::GLboolean g_saved_blend_on = 0;
-gl::GLuint g_raw_tex = 0, g_raw_fbo = 0, g_out_tex = 0, g_out_fbo = 0, g_program = 0, g_vao = 0;
+gl::GLuint g_tex = 0, g_fbo = 0;
 int g_tex_width = 0, g_tex_height = 0;
+std::unordered_set<unsigned> g_ui_programs;  // drew 2D into the HUD framebuffer this frame
+unsigned g_overlay_frames = 0, g_redirected = 0;
+gl::GLint g_saved_blend[4];
 
-const char* kVertexShader = R"(#version 330
-out vec2 uv;
-void main() {
-    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);  // fullscreen triangle
-    uv = p;
-    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-})";
+constexpr gl::GLenum kSrcRgb = 0x80C9, kDstRgb = 0x80C8, kSrcAlpha = 0x80CB, kDstAlpha = 0x80CA, kOne = 1,
+                     kOneMinusSrcAlpha = 0x0303;
 
-// The game's HUD target holds premultiplied colour with *transmittance* in alpha (cleared to alpha 1, blended with
-// dstAlpha *= 1 - srcAlpha). The overlay wants coverage alpha.
-const char* kFragmentShader = R"(#version 330
-uniform sampler2D hud;
-uniform int premultiplied;
-in vec2 uv;
-out vec4 color;
-void main() {
-    vec4 h = texture(hud, uv);
-    float a = 1.0 - h.a;
-    color = premultiplied != 0 ? vec4(h.rgb, a) : vec4(a > 0.0 ? h.rgb / a : vec3(0.0), a);
-})";
-
-gl::GLuint compile(gl::GLenum type, const char* source) {
+bool ensure_target() {
+    if (g_tex && g_tex_width == g_width && g_tex_height == g_height) return true;
+    if (g_width <= 0 || g_height <= 0) return false;
     const gl::Api& a = gl::api();
-    gl::GLuint s = a.CreateShader(type);
-    a.ShaderSource(s, 1, &source, nullptr);
-    a.CompileShader(s);
-    gl::GLint ok = 0;
-    a.GetShaderiv(s, gl::COMPILE_STATUS, &ok);
-    if (!ok) {
-        char log[512] = {};
-        a.GetShaderInfoLog(s, sizeof log, nullptr, log);
-        HW2VR_LOG("hud: shader compile failed: %s", log);
-    }
-    return s;
-}
-
-bool ensure_program() {
-    if (g_program) return true;
-    const gl::Api& a = gl::api();
-    const gl::GLuint vs = compile(gl::VERTEX_SHADER, kVertexShader), fs = compile(gl::FRAGMENT_SHADER, kFragmentShader);
-    g_program = a.CreateProgram();
-    a.AttachShader(g_program, vs);
-    a.AttachShader(g_program, fs);
-    a.LinkProgram(g_program);
-    a.DeleteShader(vs);
-    a.DeleteShader(fs);
-    gl::GLint linked = 0;
-    a.GetProgramiv(g_program, gl::LINK_STATUS, &linked);
-    if (!linked) {
-        HW2VR_LOG("hud: conversion program failed to link - HUD capture disabled");
-        g_capture = false;
-        return false;
-    }
-    a.GenVertexArrays(1, &g_vao);
-    return true;
-}
-
-void make_target(gl::GLuint& tex, gl::GLuint& fbo, int w, int h) {
-    const gl::Api& a = gl::api();
-    if (!tex) a.GenTextures(1, &tex);
-    a.BindTexture(gl::TEXTURE_2D, tex);
-    a.TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, w, h, 0, gl::RGBA, gl::UNSIGNED_BYTE, nullptr);
+    if (!g_tex) a.GenTextures(1, &g_tex);
+    a.BindTexture(gl::TEXTURE_2D, g_tex);
+    a.TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8, g_width, g_height, 0, gl::RGBA, gl::UNSIGNED_BYTE, nullptr);
     a.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR);
     a.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR);
     a.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE);
     a.TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE);
-    if (!fbo) a.GenFramebuffers(1, &fbo);
-    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, fbo);
-    a.FramebufferTexture2D(gl::DRAW_FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, tex, 0);
-    if (a.CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) != gl::FRAMEBUFFER_COMPLETE)
-        HW2VR_LOG("hud: our %dx%d target is incomplete", w, h);
+    if (!g_fbo) a.GenFramebuffers(1, &g_fbo);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_fbo);
+    a.FramebufferTexture2D(gl::DRAW_FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, g_tex, 0);
+    const bool ok = a.CheckFramebufferStatus(gl::DRAW_FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE;
+    if (!ok) HW2VR_LOG("hud: overlay target %dx%d is incomplete", g_width, g_height);
+    else HW2VR_LOG("hud: overlay target %dx%d", g_width, g_height);
+    g_tex_width = g_width;
+    g_tex_height = g_height;
+    return ok;
 }
 
-void capture(unsigned hud_fbo) {
-    if (!ensure_program()) return;
-    const gl::Api& a = gl::api();
+// Start of this frame's HUD pass: an empty overlay to redirect the 2D draws into.
+void begin_overlay_frame() {
     gl::StateGuard guard;
     gl::StateGuard::neutral();
-    if (g_tex_width != g_width || g_tex_height != g_height) {
-        make_target(g_raw_tex, g_raw_fbo, g_width, g_height);
-        make_target(g_out_tex, g_out_fbo, g_width, g_height);
-        g_tex_width = g_width;
-        g_tex_height = g_height;
-        HW2VR_LOG("hud: capture targets %dx%d", g_width, g_height);
-    }
-    // 1. Copy the game's HUD.
-    a.BindFramebuffer(gl::READ_FRAMEBUFFER, hud_fbo);
-    a.ReadBuffer(gl::COLOR_ATTACHMENT0);
-    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_raw_fbo);
-    a.BlitFramebuffer(0, 0, g_width, g_height, 0, 0, g_width, g_height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-    // 2. Convert transmittance -> coverage for the overlay.
-    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_out_fbo);
-    a.Viewport(0, 0, g_width, g_height);
-    a.UseProgram(g_program);
-    a.Uniform1i(a.GetUniformLocation(g_program, "premultiplied"), g_premultiplied ? 1 : 0);
-    a.BindVertexArray(g_vao);
-    a.ActiveTexture(gl::TEXTURE0);
-    a.BindTexture(gl::TEXTURE_2D, g_raw_tex);
-    a.BindSampler(0, 0);
-    a.DrawArrays(gl::TRIANGLES, 0, 3);
-    // 3. Empty the game's HUD so the final composite (and so the eye images) carry none.
-    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, hud_fbo);
-    a.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    if (!ensure_target()) return;
+    const gl::Api& a = gl::api();
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_fbo);
+    a.ClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     a.Clear(gl::COLOR_BUFFER_BIT);
-    g_captured = true;
-    ++g_captures;
+    g_ready = true;
+    ++g_overlay_frames;
 }
 
 }  // namespace
@@ -150,8 +80,8 @@ void set_target_size(int width, int height) {
     g_height = height;
 }
 
-void on_draw_framebuffer_change(unsigned from, unsigned to) {
-    if (g_capture && !g_captured && is_hud_fbo(from) && to != from && g_width > 0 && g_height > 0) capture(from);
+void on_draw_framebuffer_change(unsigned /*from*/, unsigned to) {
+    if (g_capture && g_premultiplied && !g_ready && is_hud_fbo(to)) begin_overlay_frame();
 }
 
 void end_frame() {
@@ -160,7 +90,7 @@ void end_frame() {
         if (fbo != 0 && count > best) winner = fbo, best = count;
     g_ortho_counts.clear();
     g_ui_programs.clear();
-    g_captured = false;
+    g_ready = false;
 
     if (best < kMinOrthoUploads) winner = 0;
     if (winner == 0) {
@@ -179,50 +109,47 @@ void end_frame() {
     }
 }
 
-bool captured_this_frame() { return g_captured; }
-unsigned overlay_texture() { return g_out_tex; }
+bool overlay_ready() { return g_ready; }
+unsigned overlay_texture() { return g_tex; }
 
-void note_draw(unsigned draw_fbo, unsigned program) {
-    if (is_hud_fbo(draw_fbo)) g_ui_programs.insert(program);
+bool should_redirect(unsigned draw_fbo, unsigned program, bool is_2d) {
+    if (!g_ready) return false;
+    if (is_hud_fbo(draw_fbo)) {
+        if (is_2d) g_ui_programs.insert(program);
+        return is_2d;  // 3D overlay stays in the game's HUD layer, drawn per eye
+    }
+    return draw_fbo == 0 && g_ui_programs.count(program) != 0;  // UI drawn after the composite (cursor)
 }
 
-bool should_redirect(unsigned draw_fbo, unsigned program) {
-    return g_capture && g_captured && g_premultiplied && draw_fbo == 0 && g_ui_programs.count(program) != 0;
-}
-
-void begin_redirect() {
-    constexpr gl::GLenum kSrcRgb = 0x80C9, kDstRgb = 0x80C8, kSrcAlpha = 0x80CB, kDstAlpha = 0x80CA, kOne = 1,
-                         kOneMinusSrcAlpha = 0x0303;
+void begin_redirect(unsigned /*draw_fbo*/) {
     const gl::Api& a = gl::api();
     a.GetIntegerv(kSrcRgb, &g_saved_blend[0]);
     a.GetIntegerv(kDstRgb, &g_saved_blend[1]);
     a.GetIntegerv(kSrcAlpha, &g_saved_blend[2]);
     a.GetIntegerv(kDstAlpha, &g_saved_blend[3]);
-    g_saved_blend_on = a.IsEnabled(gl::BLEND);
-    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_out_fbo);
-    // The game's alpha factors write transmittance; the overlay holds coverage.
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_fbo);
+    // The game's alpha factors write transmittance; the overlay holds coverage. Colour factors stay the game's, so
+    // the overlay accumulates premultiplied colour.
     a.BlendFuncSeparate(static_cast<gl::GLenum>(g_saved_blend[0]), static_cast<gl::GLenum>(g_saved_blend[1]), kOne,
                         kOneMinusSrcAlpha);
     ++g_redirected;
 }
 
-void end_redirect() {
+void end_redirect(unsigned draw_fbo) {
     const gl::Api& a = gl::api();
     a.BlendFuncSeparate(static_cast<gl::GLenum>(g_saved_blend[0]), static_cast<gl::GLenum>(g_saved_blend[1]),
                         static_cast<gl::GLenum>(g_saved_blend[2]), static_cast<gl::GLenum>(g_saved_blend[3]));
-    g_saved_blend_on ? a.Enable(gl::BLEND) : a.Disable(gl::BLEND);
-    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, 0);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, draw_fbo);
 }
 
-TestState test_state() { return {g_hud_fbo, g_out_tex, g_captures, g_redirected}; }
+TestState test_state() { return {g_hud_fbo, g_tex, g_overlay_frames, g_redirected}; }
 
 void release() {
     const gl::Api& a = gl::api();
-    if (!a.DeleteTextures) return;
-    gl::GLuint tex[2] = {g_raw_tex, g_out_tex}, fbo[2] = {g_raw_fbo, g_out_fbo};
-    a.DeleteTextures(2, tex);
-    a.DeleteFramebuffers(2, fbo);
-    g_raw_tex = g_out_tex = g_raw_fbo = g_out_fbo = 0;
+    if (!a.DeleteTextures || !g_tex) return;
+    a.DeleteTextures(1, &g_tex);
+    a.DeleteFramebuffers(1, &g_fbo);
+    g_tex = g_fbo = 0;
     g_tex_width = g_tex_height = 0;
 }
 

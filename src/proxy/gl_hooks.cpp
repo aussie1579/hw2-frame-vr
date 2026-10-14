@@ -1,5 +1,5 @@
-// Hooks for the two exports we implement (wglGetProcAddress, wglSwapBuffers) and the GL 2.0+ entry points the
-// game fetches through wglGetProcAddress. Everything runs on the game's render thread.
+// Hooks for the exports we implement (wglGetProcAddress, wglSwapBuffers, glDrawArrays, glDrawElements) and the
+// GL 2.0+ entry points the game fetches through wglGetProcAddress. Everything runs on the game's render thread.
 //
 // Where the camera enters a shader (docs/FINDINGS.md "Camera", all programs of build 12653478):
 //   A. inMatV or inMatC present           -> that uniform is the camera view          (E * V)
@@ -8,8 +8,8 @@
 //                                            glows, prog "screenCorner"), if inMatP is perspective (P * E)
 // B and C programs with an ortho inMatP are 2D HUD / post-processing and stay untouched. "Perspective" comes from
 // the program's most recent inMatP upload. In VR every perspective inMatP also gets the eye frustum.
-// Nothing is overridden while the game draws into its HUD framebuffer: the HUD layer keeps the game's own camera
-// so it matches the 2D markers the game positions on the CPU (it is shown on an overlay fixed in that camera's frame).
+// This includes the 3D overlay the game draws into its HUD framebuffer (selection circles, move lines): those stay
+// in the eye images at their ships' depth, while the 2D draws there are redirected onto the VR overlay (hud_layer.h).
 #include "proxy/gl_hooks.h"
 
 #include <windows.h>
@@ -152,7 +152,7 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
     ProgramInfo* info = g_current;
     if (info && loc >= 0 && count == 1 && !transpose && value) {
         const bool hud_layer = hw2vr::hud::is_hud_fbo(g_draw_fbo);
-        const bool override_camera = hw2vr::stereo::active() && !hud_layer;
+        const bool override_camera = hw2vr::stereo::active();
         GLfloat replaced[16];
         if (loc == info->loc_proj) {
             info->proj_is_perspective = hw2vr::mat4::is_perspective(value);
@@ -175,15 +175,15 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
     real_glUniformMatrix4fv(loc, count, transpose, value);
 }
 
-// Every game draw: note UI programs, and send UI drawn to the screen after the HUD capture (the mouse cursor) onto
-// the HUD overlay instead (hud_layer.h).
+// Every game draw: 2D draws into the HUD framebuffer, and UI drawn to the screen after the composite (the mouse
+// cursor), go onto the VR overlay instead (hud_layer.h). Untracked programs count as 2D.
 template <class Draw>
 void game_draw(Draw draw) {
-    hw2vr::hud::note_draw(g_draw_fbo, g_current_program);
-    if (!hw2vr::hud::should_redirect(g_draw_fbo, g_current_program)) return draw();
-    hw2vr::hud::begin_redirect();
+    const bool is_2d = !g_current || !g_current->proj_is_perspective;
+    if (!hw2vr::hud::should_redirect(g_draw_fbo, g_current_program, is_2d)) return draw();
+    hw2vr::hud::begin_redirect(g_draw_fbo);
     draw();
-    hw2vr::hud::end_redirect();
+    hw2vr::hud::end_redirect(g_draw_fbo);
 }
 
 // Paints a 24 px square in the window's top-left corner on the default framebuffer (spike / VR status).

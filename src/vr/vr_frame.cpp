@@ -159,7 +159,7 @@ void before_swap(HDC dc) {
         for (int eye = 0; eye < 2; ++eye)
             if (g_eye_valid[eye]) vr::submit(eye, g_eye_tex[eye], g_pose_used[eye]);
     }
-    if (hud::captured_this_frame()) vr::hud_set_texture(hud::overlay_texture());
+    if (hud::overlay_ready()) vr::hud_set_texture(hud::overlay_texture());
 }
 
 void after_swap() {

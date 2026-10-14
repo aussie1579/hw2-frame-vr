@@ -183,7 +183,7 @@ struct Gl {
 
 // --- HUD pipeline ([debug] hud_capture = 1): capture, transmittance -> coverage, clear, cursor redirect ----------
 struct HudTestState {
-    unsigned hud_fbo, overlay_texture, captures, redirected_draws;  // mirrors hw2vr::hud::TestState
+    unsigned hud_fbo, overlay_texture, overlay_frames, redirected_draws;  // mirrors hw2vr::hud::TestState
 };
 using PFNTESTSTATE = HudTestState (*)();
 using PFNBINDFRAMEBUFFER = void(APIENTRY*)(GLenum, GLuint);
@@ -221,9 +221,10 @@ bool pixel_near(const unsigned char* p, int r, int g, int b, int a) {
     return std::abs(p[0] - r) <= 3 && std::abs(p[1] - g) <= 3 && std::abs(p[2] - b) <= 3 && std::abs(p[3] - a) <= 3;
 }
 
-// Plays the game's HUD pattern for 16 frames: HUD drawn into its own FBO (cleared to (0,0,0,1), transmittance
-// alpha blend, 3 ortho inMatP uploads), then the default framebuffer: a "composite" by a non-UI program and a
-// "cursor" by the UI program. Checks what the proxy made of it.
+// Plays the game's HUD pattern for 16 frames, screen split in thirds: into the HUD FBO (cleared to (0,0,0,1),
+// transmittance alpha blend, 3 ortho inMatP uploads) a 2D element (left third) and a world-anchored 3D element with a
+// perspective inMatP (middle third); then into the default framebuffer a "composite" by a non-UI program and a
+// "cursor" by the UI program (right third). Checks what the proxy made of it.
 void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
     RECT rc;
     GetClientRect(WindowFromDC(dc), &rc);
@@ -241,8 +242,14 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
     proc<PFNFRAMEBUFFERTEXTURE2D>("glFramebufferTexture2D")(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, hud_tex, 0);
     bind_fbo(GL_FRAMEBUFFER, 0);
 
-    const float quads[] = {0, 0, 0.5f, 0, 0.5f, 1, 0, 0, 0.5f, 1, 0, 1,                // left half: HUD element
-                           0.5f, 0, 1, 0, 1, 1, 0.5f, 0, 1, 1, 0.5f, 1};             // right half: "cursor"
+    auto quad = [](float x0, float x1, float* out) {
+        const float v[12] = {x0, 0, x1, 0, x1, 1, x0, 0, x1, 1, x0, 1};
+        std::memcpy(out, v, sizeof v);
+    };
+    float quads[36];
+    quad(0.0f, 1.0f / 3, quads);        // 2D HUD element
+    quad(1.0f / 3, 2.0f / 3, quads + 12);  // 3D overlay element
+    quad(2.0f / 3, 1.0f, quads + 24);   // "cursor"
     proc<PFNGENVERTEXARRAYS>("glGenVertexArrays")(1, &vao);
     proc<PFNBINDVERTEXARRAY>("glBindVertexArray")(vao);
     proc<PFNGENBUFFERS>("glGenBuffers")(1, &vbo);
@@ -254,14 +261,17 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
     const char* vs = "#version 330 compatibility\nlayout(location = 0) in vec2 inPos;\nuniform mat4 inMatP, inMatMV;\n"
                      "void main() { gl_Position = inMatP * inMatMV * vec4(inPos, 0.0, 1.0); }\n";
     const char* fs = "#version 330\nuniform vec4 inTint;\nout vec4 color;\nvoid main() { color = inTint; }\n";
-    const GLuint ui = build_program(gl, vs, fs), other = build_program(gl, vs, fs);
-    check(ui && other, "HUD test programs linked");
+    const GLuint ui = build_program(gl, vs, fs), world = build_program(gl, vs, fs), other = build_program(gl, vs, fs);
+    check(ui && world && other, "HUD test programs linked");
     const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-    const float tint[4] = {0.5f, 0, 0, 0.5f};  // HUD target expects rgb 0.25, transmittance 0.5
-    auto setup = [&](GLuint program, int ortho_uploads) {
+    // World element: view space x in [-1/3, 1/3], y in [-1, 1] at z = -1, through a 90-degree perspective.
+    const float world_mv[16] = {2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, -1, -1, -1, 1};
+    const float perspective[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, -0.2f, 0};
+    const float red[4] = {0.5f, 0, 0, 0.5f}, green[4] = {0, 0.5f, 0, 0.5f};  // -> rgb 0.25, alpha 0.5
+    auto setup = [&](GLuint program, const float* p, int p_uploads, const float* mv, const float* tint) {
         gl.use_program(program);
-        for (int i = 0; i < ortho_uploads; ++i) gl.uniform_matrix4fv(gl.get_uniform_location(program, "inMatP"), 1, GL_FALSE, kOrtho);
-        gl.uniform_matrix4fv(gl.get_uniform_location(program, "inMatMV"), 1, GL_FALSE, identity);
+        for (int i = 0; i < p_uploads; ++i) gl.uniform_matrix4fv(gl.get_uniform_location(program, "inMatP"), 1, GL_FALSE, p);
+        gl.uniform_matrix4fv(gl.get_uniform_location(program, "inMatMV"), 1, GL_FALSE, mv);
         uniform4fv(gl.get_uniform_location(program, "inTint"), 1, tint);
     };
 
@@ -272,36 +282,43 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         blend_separate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);  // the game's HUD blend
-        setup(ui, 3);
-        glDrawArrays(GL_TRIANGLES, 0, 6);  // HUD element, left half
-        bind_fbo(GL_FRAMEBUFFER, 0);       // leaving the HUD FBO: the proxy captures here
-        setup(other, 1);
-        glDrawArrays(GL_TRIANGLES, 0, 6);  // "composite" by a non-UI program: must stay on screen
-        setup(ui, 1);
-        glDrawArrays(GL_TRIANGLES, 6, 6);  // "cursor" by the UI program: must go onto the overlay
+        setup(ui, kOrtho, 3, identity, red);
+        glDrawArrays(GL_TRIANGLES, 0, 6);    // 2D element: must go onto the overlay
+        setup(world, perspective, 1, world_mv, green);
+        glDrawArrays(GL_TRIANGLES, 6, 6);    // 3D overlay element: must stay in the game's HUD layer (eye images)
+        bind_fbo(GL_FRAMEBUFFER, 0);
+        setup(other, kOrtho, 1, identity, red);
+        glDrawArrays(GL_TRIANGLES, 0, 6);    // "composite" by a non-UI program: must stay on screen
+        setup(ui, kOrtho, 1, identity, red);
+        glDrawArrays(GL_TRIANGLES, 12, 6);   // "cursor" by the UI program: must go onto the overlay
         wglSwapBuffers(dc);
     }
 
     auto state_fn = reinterpret_cast<PFNTESTSTATE>(GetProcAddress(proxy, "hw2vr_test_state"));
     const HudTestState s = state_fn ? state_fn() : HudTestState{};
-    std::printf("HUD state: hud_fbo %u (ours %u), overlay tex %u, captures %u, redirected draws %u\n", s.hud_fbo,
-                hud_fbo, s.overlay_texture, s.captures, s.redirected_draws);
+    std::printf("HUD state: hud_fbo %u (ours %u), overlay tex %u, overlay frames %u, redirected draws %u\n", s.hud_fbo,
+                hud_fbo, s.overlay_texture, s.overlay_frames, s.redirected_draws);
     check(s.hud_fbo == hud_fbo, "HUD framebuffer identified from its ortho uploads");
-    check(s.captures >= 3 && s.redirected_draws == s.captures, "one capture and one cursor redirect per frame");
+    check(s.overlay_frames >= 3 && s.redirected_draws == 2 * s.overlay_frames,
+          "per frame: the 2D element and the cursor redirected, the 3D element not");
 
     std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
-    auto at = [&](int x, int y) { return &px[(static_cast<size_t>(y) * w + x) * 4]; };
+    auto at = [&](int third) { return &px[(static_cast<size_t>(h / 2) * w + (2 * third + 1) * w / 6) * 4]; };
+    auto print = [](const char* what, const unsigned char* p) { std::printf("  %-26s %3d,%3d,%3d,%3d\n", what, p[0], p[1], p[2], p[3]); };
     glBindTexture(GL_TEXTURE_2D, s.overlay_texture);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-    const unsigned char* left = at(w / 4, h / 2);
-    const unsigned char* right = at(3 * w / 4, h / 2);
-    std::printf("overlay pixels: left %d,%d,%d,%d  right %d,%d,%d,%d\n", left[0], left[1], left[2], left[3], right[0],
-                right[1], right[2], right[3]);
-    check(pixel_near(left, 64, 0, 0, 128), "overlay: HUD element premultiplied with coverage alpha (64,0,0,128)");
-    check(pixel_near(right, 64, 0, 0, 128), "overlay: cursor redirected onto it with coverage alpha (64,0,0,128)");
+    print("overlay  2D element:", at(0));
+    print("overlay  3D element:", at(1));
+    print("overlay  cursor:", at(2));
+    check(pixel_near(at(0), 64, 0, 0, 128), "overlay: 2D element, premultiplied colour + coverage alpha");
+    check(pixel_near(at(1), 0, 0, 0, 0), "overlay: no 3D element (it belongs in the eye images)");
+    check(pixel_near(at(2), 64, 0, 0, 128), "overlay: cursor redirected onto it");
     glBindTexture(GL_TEXTURE_2D, hud_tex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-    check(pixel_near(at(w / 4, h / 2), 0, 0, 0, 255), "game's HUD target cleared after capture (no HUD in the eyes)");
+    print("game HUD 2D element:", at(0));
+    print("game HUD 3D element:", at(1));
+    check(pixel_near(at(0), 0, 0, 0, 255), "game's HUD layer: no 2D element (it went to the overlay)");
+    check(pixel_near(at(1), 0, 64, 0, 128), "game's HUD layer: 3D element kept, game's own alpha convention");
     check(glGetError() == GL_NO_ERROR, "no GL errors in the HUD pipeline");
 }
 
