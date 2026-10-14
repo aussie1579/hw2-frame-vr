@@ -27,9 +27,14 @@ unsigned overlay_texture();  // GL texture for the VR overlay (premultiplied col
 void release();              // delete GL objects (VR off)
 
 // Every game draw, before it runs. is_2d: the current program's projection is ortho (or untracked).
-bool should_redirect(unsigned draw_fbo, unsigned program, bool is_2d);
+// Redirect: onto the overlay. Skip: during the second-eye replay, the 2D draws and cursor are already on it.
+enum class DrawAction { Draw, Redirect, Skip };
+DrawAction draw_action(unsigned draw_fbo, unsigned program, bool is_2d);
 void begin_redirect(unsigned draw_fbo);  // bind the overlay target, keep the game's colour blend, coverage alpha
 void end_redirect(unsigned draw_fbo);    // restore the game's blend and framebuffer
+
+// While a frame is replayed for the second eye: no new overlay frame, no identification statistics.
+void set_replaying(bool on);
 
 // For tests/proxy_smoke.cpp (exported from the DLL as hw2vr_test_state).
 struct TestState {

@@ -10,4 +10,15 @@ bool load_real_opengl32();
 
 HMODULE real_opengl32();
 
+// Name of a forwarded (stub) export by index, for logging which unrecorded call broke a frame's replay.
+const char* forwarded_export_name(long index);
+
+}  // namespace hw2vr::proxy
+
+// Bumped by the counting stubs (exports.cpp) and by counting thunks for unrecorded extension functions.
+extern "C" long g_hw2vr_unrecorded_calls;
+extern "C" long g_hw2vr_last_unrecorded;
+
+namespace hw2vr::proxy {
+
 }  // namespace hw2vr::proxy

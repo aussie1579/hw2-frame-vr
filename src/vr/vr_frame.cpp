@@ -7,7 +7,9 @@
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
 #include "proxy/gl_api.h"
+#include "proxy/gl_hooks.h"
 #include "stereo/eye_math.h"
+#include "stereo/frame_replay.h"
 #include "stereo/view_override.h"
 #include "vr/openvr_session.h"
 
@@ -29,6 +31,16 @@ bool g_hud_shown = false;
 
 int g_width = 0, g_height = 0;
 gl::GLuint g_eye_tex[2] = {}, g_eye_fbo[2] = {};
+
+float g_eye_view[2][16];          // this frame's camera for each eye (from one head pose)
+stereo::Frustum g_eye_frustum[2] = {};
+float g_frame_pose[16];           // the head pose this frame was rendered from
+
+LARGE_INTEGER g_qpf = {};
+long long g_window_start = 0;
+unsigned g_window_frames = 0, g_window_replays = 0;
+double g_window_replay_ms = 0.0;
+const char* g_last_fallback = "";
 
 void release_targets() {
     const gl::Api& a = gl::api();
@@ -128,6 +140,48 @@ void handle_hotkeys() {
     }
 }
 
+
+void capture_eye(int eye) {
+    const gl::Api& a = gl::api();
+    gl::StateGuard guard;
+    gl::StateGuard::neutral();
+    a.BindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+    a.ReadBuffer(gl::BACK);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_eye_fbo[eye]);
+    a.BlitFramebuffer(0, 0, g_width, g_height, 0, 0, g_width, g_height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    g_eye_valid[eye] = true;
+}
+
+void set_eye_camera(int eye) { stereo::set_vr_eye(g_eye_view[eye], g_eye_frustum[eye]); }
+
+// Every few seconds: how fast the game runs in VR and what synchronized stereo costs.
+void telemetry(bool replayed, double replay_ms) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (g_window_start == 0) g_window_start = now.QuadPart;
+    ++g_window_frames;
+    if (replayed) {
+        ++g_window_replays;
+        g_window_replay_ms += replay_ms;
+    }
+    const double seconds = double(now.QuadPart - g_window_start) / double(g_qpf.QuadPart);
+    if (seconds < 5.0) return;
+    const replay::Stats s = replay::stats();
+    if (g_settings.sync_stereo)
+        HW2VR_LOG("vr: %.1f fps | synchronized stereo: %u/%u frames replayed, %.2f ms CPU per replay, %u GL calls and "
+                  "%u KB per frame%s%s",
+                  g_window_frames / seconds, g_window_replays, g_window_frames,
+                  g_window_replays ? g_window_replay_ms / g_window_replays : 0.0, s.commands, s.bytes / 1024,
+                  g_window_replays < g_window_frames ? " | last fallback: " : "",
+                  g_window_replays < g_window_frames ? g_last_fallback : "");
+    else
+        HW2VR_LOG("vr: %.1f fps | alternating-frame stereo (%.1f updates per eye per second)", g_window_frames / seconds,
+                  g_window_frames / seconds / 2.0);
+    g_window_start = now.QuadPart;
+    g_window_frames = g_window_replays = 0;
+    g_window_replay_ms = 0.0;
+}
+
 }  // namespace
 
 void configure(const Settings& settings, const std::wstring& dll_dir) {
@@ -135,7 +189,11 @@ void configure(const Settings& settings, const std::wstring& dll_dir) {
     g_dll_dir = dll_dir;
     g_autostart_pending = settings.autostart;
     mat4::identity(g_recentre_inverse);
+    QueryPerformanceFrequency(&g_qpf);
 }
+
+bool active() { return vr::running(); }
+bool wants_recording() { return vr::running() && g_settings.sync_stereo && g_have_pose; }
 
 void before_swap(HDC dc) {
     handle_hotkeys();
@@ -146,18 +204,34 @@ void before_swap(HDC dc) {
     if (!ensure_targets(rc.right, rc.bottom)) return;
 
     if (g_have_pose) {
-        const gl::Api& a = gl::api();
-        {
-            gl::StateGuard guard;
-            gl::StateGuard::neutral();
-            a.BindFramebuffer(gl::READ_FRAMEBUFFER, 0);
-            a.ReadBuffer(gl::BACK);
-            a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_eye_fbo[g_eye]);
-            a.BlitFramebuffer(0, 0, g_width, g_height, 0, 0, g_width, g_height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+        bool replayed = false;
+        double replay_ms = 0.0;
+        if (g_settings.sync_stereo) {
+            // The game just rendered the left eye; replay the same frame for the right eye.
+            capture_eye(0);
+            std::memcpy(g_pose_used[0], g_frame_pose, sizeof g_frame_pose);
+            if (replay::replayable()) {
+                LARGE_INTEGER t0, t1;
+                QueryPerformanceCounter(&t0);
+                set_eye_camera(1);
+                proxy::replay_frame();
+                capture_eye(1);
+                QueryPerformanceCounter(&t1);
+                std::memcpy(g_pose_used[1], g_frame_pose, sizeof g_frame_pose);
+                replayed = true;
+                replay_ms = 1000.0 * double(t1.QuadPart - t0.QuadPart) / double(g_qpf.QuadPart);
+            } else {
+                // The right eye keeps its previous image and pose; the compositor reprojects it.
+                replay::note_skipped();
+                g_last_fallback = replay::why_not();
+            }
+            replay::flush_deferred_deletes();
+        } else {
+            capture_eye(g_eye);
         }
-        g_eye_valid[g_eye] = true;
         for (int eye = 0; eye < 2; ++eye)
             if (g_eye_valid[eye]) vr::submit(eye, g_eye_tex[eye], g_pose_used[eye]);
+        telemetry(replayed, replay_ms);
     }
     if (hud::overlay_ready()) vr::hud_set_texture(hud::overlay_texture());
 }
@@ -181,12 +255,19 @@ void after_swap() {
         g_recentre = false;
     }
     place_hud(hmd);
-    g_eye ^= 1;
-    float e[16];
-    stereo::eye_from_game_camera(hmd, g_recentre_inverse, vr::eye_to_head(g_eye), g_settings.world_scale, e);
-    const vr::EyeFrustum& f = vr::frustum(g_eye);
-    stereo::set_vr_eye(e, stereo::Frustum{f.left, f.right, f.down, f.up});
-    std::memcpy(g_pose_used[g_eye], hmd, sizeof hmd);
+    for (int eye = 0; eye < 2; ++eye) {
+        stereo::eye_from_game_camera(hmd, g_recentre_inverse, vr::eye_to_head(eye), g_settings.world_scale, g_eye_view[eye]);
+        const vr::EyeFrustum& f = vr::frustum(eye);
+        g_eye_frustum[eye] = stereo::Frustum{f.left, f.right, f.down, f.up};
+    }
+    std::memcpy(g_frame_pose, hmd, sizeof hmd);
+    if (g_settings.sync_stereo) {
+        set_eye_camera(0);  // the game renders the left eye; the right is replayed at the next swap
+    } else {
+        g_eye ^= 1;  // alternating-frame rendering
+        set_eye_camera(g_eye);
+        std::memcpy(g_pose_used[g_eye], hmd, sizeof hmd);
+    }
     g_have_pose = true;
 }
 

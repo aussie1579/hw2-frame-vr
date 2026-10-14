@@ -213,6 +213,7 @@ using PFNUNIFORM4FV = void(APIENTRY*)(GLint, GLsizei, const GLfloat*);
 using PFNBLENDFUNCSEPARATE = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
 constexpr GLenum GL_FRAMEBUFFER = 0x8D40, GL_COLOR_ATTACHMENT0 = 0x8CE0, GL_ARRAY_BUFFER = 0x8892,
                  GL_STATIC_DRAW = 0x88E4, GL_FRAGMENT_SHADER = 0x8B30, GL_RGBA8_ = 0x8058;
+std::wstring ini_next_to_exe();
 
 GLuint build_program(const Gl& gl, const char* vs, const char* fs) {
     auto attach = [&](GLuint program, GLenum type, const char* text) {
@@ -335,6 +336,110 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
     check(glGetError() == GL_NO_ERROR, "no GL errors in the HUD pipeline");
 }
 
+// --- Second-eye replay ([debug] replay_test_offset_x): record, replay with an offset camera, deferred deletes -------
+struct ReplayStats {
+    unsigned replays, skipped, commands, bytes;  // mirrors hw2vr::replay::Stats
+};
+using PFNREPLAYSTATS = ReplayStats (*)();
+
+float replay_test_offset() {
+    wchar_t buf[32];
+    GetPrivateProfileStringW(L"debug", L"replay_test_offset_x", L"0", buf, 32, ini_next_to_exe().c_str());
+    return std::wcstof(buf, nullptr);
+}
+
+// Each frame: clear an FBO, draw two quads through one streaming buffer (re-uploaded before each draw), delete the
+// buffer mid-frame. The proxy replays the frame at the swap with the view shifted by `offset`, so afterwards the FBO
+// must hold the *shifted* quads only - proving the clear and both draws were replayed with the new camera, each
+// draw got its own buffer data back, and the deferred delete kept the buffer alive for the replay.
+void replay_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy, float offset) {
+    RECT rc;
+    GetClientRect(WindowFromDC(dc), &rc);
+    const int w = rc.right, h = rc.bottom;
+    auto bind_fbo = proc<PFNBINDFRAMEBUFFER>("glBindFramebuffer");
+    auto gen_buffers = proc<PFNGENBUFFERS>("glGenBuffers");
+    auto bind_buffer = proc<PFNBINDBUFFER>("glBindBuffer");
+    auto buffer_data = proc<PFNBUFFERDATA>("glBufferData");
+    auto attrib_pointer = proc<PFNVERTEXATTRIBPOINTER>("glVertexAttribPointer");
+    auto enable_attrib = proc<PFNENABLEVERTEXATTRIBARRAY>("glEnableVertexAttribArray");
+    auto bind_vao = proc<PFNBINDVERTEXARRAY>("glBindVertexArray");
+    using PFNDELETEBUFFERS = void(APIENTRY*)(GLsizei, const GLuint*);
+    auto delete_buffers = proc<PFNDELETEBUFFERS>("glDeleteBuffers");
+
+    GLuint tex, fbo, vao;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8_, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    proc<PFNGENFRAMEBUFFERS>("glGenFramebuffers")(1, &fbo);
+    bind_fbo(GL_FRAMEBUFFER, fbo);
+    proc<PFNFRAMEBUFFERTEXTURE2D>("glFramebufferTexture2D")(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    bind_fbo(GL_FRAMEBUFFER, 0);
+    proc<PFNGENVERTEXARRAYS>("glGenVertexArrays")(1, &vao);
+
+    const char* vs = "#version 330 compatibility\nlayout(location = 0) in vec2 inPos;\nuniform mat4 inMatP, inMatV, inMatM;\n"
+                     "void main() { gl_Position = inMatP * inMatV * inMatM * vec4(inPos, 0.0, 1.0); }\n";
+    const char* fs = "#version 330\nout vec4 color;\nvoid main() { color = vec4(1.0); }\n";
+    const GLuint scene = build_program(gl, vs, fs);
+    check(scene != 0, "replay test program linked");
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    // A camera away from the origin, like the game's (a translation-free view is treated as a skybox and only
+    // rotated), and a projection that flattens z so the translated quads stay inside the clip volume.
+    const float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -5, 1};
+    const float flat_projection[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    auto quad = [](float x0, float x1, float* v) {
+        const float q[12] = {x0, -1, x1, -1, x1, 1, x0, -1, x1, 1, x0, 1};
+        std::memcpy(v, q, sizeof q);
+    };
+    float quad_a[12], quad_b[12];
+    quad(-0.9f, -0.5f, quad_a);
+    quad(0.3f, 0.5f, quad_b);
+
+    for (int frame = 0; frame < 6; ++frame) {
+        bind_fbo(GL_FRAMEBUFFER, fbo);
+        glViewport(0, 0, w, h);
+        glDisable(GL_BLEND);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        gl.use_program(scene);
+        gl.uniform_matrix4fv(gl.get_uniform_location(scene, "inMatP"), 1, GL_FALSE, flat_projection);
+        gl.uniform_matrix4fv(gl.get_uniform_location(scene, "inMatV"), 1, GL_FALSE, view);
+        gl.uniform_matrix4fv(gl.get_uniform_location(scene, "inMatM"), 1, GL_FALSE, identity);
+        bind_vao(vao);
+        GLuint vbo;
+        gen_buffers(1, &vbo);
+        bind_buffer(GL_ARRAY_BUFFER, vbo);
+        attrib_pointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        enable_attrib(0);
+        buffer_data(GL_ARRAY_BUFFER, sizeof quad_a, quad_a, GL_STATIC_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        buffer_data(GL_ARRAY_BUFFER, sizeof quad_b, quad_b, GL_STATIC_DRAW);  // same buffer, new data
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        delete_buffers(1, &vbo);  // mid-frame delete: must wait for the replay
+        bind_fbo(GL_FRAMEBUFFER, 0);
+        wglSwapBuffers(dc);  // the proxy replays this frame with the shifted camera
+    }
+
+    auto stats_fn = reinterpret_cast<PFNREPLAYSTATS>(GetProcAddress(proxy, "hw2vr_replay_stats"));
+    const ReplayStats s = stats_fn ? stats_fn() : ReplayStats{};
+    std::printf("replay stats: %u replayed, %u skipped, %u GL calls / %u payload bytes in the last frame\n", s.replays,
+                s.skipped, s.commands, s.bytes);
+    check(s.replays >= 5, "every recorded frame was replayed");
+
+    std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    auto lit = [&](float x_ndc) {
+        const int x = static_cast<int>((x_ndc + 1.0f) * 0.5f * w);
+        return px[(static_cast<size_t>(h / 2) * w + x) * 4] > 128;
+    };
+    std::printf("  quad A: original x=-0.8 %s, shifted x=%.2f %s;  quad B: original x=0.35 %s, shifted x=%.2f %s\n",
+                lit(-0.8f) ? "lit" : "dark", -0.8f + offset + 0.1f, lit(-0.7f + offset) ? "lit" : "dark",
+                lit(0.35f) ? "lit" : "dark", 0.4f + offset, lit(0.4f + offset) ? "lit" : "dark");
+    check(!lit(-0.8f) && lit(-0.7f + offset), "replay redrew quad A with the shifted camera (and replayed the clear)");
+    check(!lit(0.35f) && lit(0.4f + offset), "replay redrew quad B from its own buffer data, after the deferred delete");
+    check(glGetError() == GL_NO_ERROR, "no GL errors in the replay test");
+}
+
 }  // namespace
 
 int main() {
@@ -445,6 +550,7 @@ int main() {
     check(SwapBuffers(dc) == TRUE, "gdi32 SwapBuffers");
 
     if (hud_test_requested()) hud_pipeline_test(gl, dc, proxy);
+    if (const float offset = replay_test_offset(); offset != 0.0f) replay_pipeline_test(gl, dc, proxy, offset);
 
     for (GLuint p : {scene_v, scene_c, hud, mv_as_view, view_space, hud_p_only}) gl.delete_program(p);
     wglMakeCurrent(nullptr, nullptr);

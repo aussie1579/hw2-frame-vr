@@ -22,6 +22,11 @@ void on_frame();  // once per wglSwapBuffers: spike hotkey + per-frame stats
 void set_vr_eye(const float eye_from_game_camera[16], const Frustum& frustum);
 void clear_vr_eye();
 bool vr_eye_active();
+// A view-only transform for tests (no projection change); nullptr clears it.
+void set_debug_eye(const float* eye_from_game_camera);
+// Bumped whenever the camera transform changes (twice per frame with synchronized stereo): anything cached per
+// camera (gl_hooks' group-B inMatMV) must be refreshed when it moves on.
+unsigned camera_generation();
 
 bool active();  // anything to apply
 

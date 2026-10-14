@@ -19,6 +19,7 @@ unsigned g_candidate = 0, g_candidate_streak = 0, g_frames_without = 0;
 
 bool g_capture = false, g_premultiplied = true;
 bool g_ready = false;  // overlay target cleared for this frame (the game has entered its HUD pass)
+bool g_replaying = false;
 int g_width = 0, g_height = 0;
 gl::GLuint g_tex = 0, g_fbo = 0;
 int g_tex_width = 0, g_tex_height = 0;
@@ -66,7 +67,9 @@ void begin_overlay_frame() {
 
 }  // namespace
 
-void note_ortho_projection(unsigned draw_fbo) { ++g_ortho_counts[draw_fbo]; }
+void note_ortho_projection(unsigned draw_fbo) {
+    if (!g_replaying) ++g_ortho_counts[draw_fbo];
+}
 
 bool is_hud_fbo(unsigned fbo) { return fbo != 0 && fbo == g_hud_fbo; }
 
@@ -81,7 +84,7 @@ void set_target_size(int width, int height) {
 }
 
 void on_draw_framebuffer_change(unsigned /*from*/, unsigned to) {
-    if (g_capture && g_premultiplied && !g_ready && is_hud_fbo(to)) begin_overlay_frame();
+    if (g_capture && g_premultiplied && !g_ready && !g_replaying && is_hud_fbo(to)) begin_overlay_frame();
 }
 
 void end_frame() {
@@ -112,14 +115,20 @@ void end_frame() {
 bool overlay_ready() { return g_ready; }
 unsigned overlay_texture() { return g_tex; }
 
-bool should_redirect(unsigned draw_fbo, unsigned program, bool is_2d) {
-    if (!g_ready) return false;
+DrawAction draw_action(unsigned draw_fbo, unsigned program, bool is_2d) {
+    if (!g_ready) return DrawAction::Draw;
+    bool to_overlay = false;
     if (is_hud_fbo(draw_fbo)) {
-        if (is_2d) g_ui_programs.insert(program);
-        return is_2d;  // 3D overlay stays in the game's HUD layer, drawn per eye
+        if (is_2d && !g_replaying) g_ui_programs.insert(program);
+        to_overlay = is_2d;  // 3D overlay stays in the game's HUD layer, drawn per eye
+    } else {
+        to_overlay = draw_fbo == 0 && g_ui_programs.count(program) != 0;  // UI drawn after the composite (cursor)
     }
-    return draw_fbo == 0 && g_ui_programs.count(program) != 0;  // UI drawn after the composite (cursor)
+    if (!to_overlay) return DrawAction::Draw;
+    return g_replaying ? DrawAction::Skip : DrawAction::Redirect;
 }
+
+void set_replaying(bool on) { g_replaying = on; }
 
 void begin_redirect(unsigned /*draw_fbo*/) {
     const gl::Api& a = gl::api();

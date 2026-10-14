@@ -41,6 +41,7 @@ bool init(HMODULE self) {
     vr.hud_scale = cfg.vr_hud_scale;
     vr.hud_premultiplied = cfg.vr_hud_premultiplied;
     vr.hud_follow_head = cfg.vr_hud_follow_head;
+    vr.sync_stereo = cfg.vr_sync_stereo;
     vr.key_toggle = cfg.key_vr_toggle;
     vr.key_recentre = cfg.key_recentre;
     vr.key_scale_up = cfg.key_scale_up;
@@ -50,6 +51,11 @@ bool init(HMODULE self) {
         hw2vr::hud::set_capture(true, cfg.vr_hud_premultiplied);
         HW2VR_LOG("debug: HUD capture forced on without VR");
     }
+    if (cfg.debug_replay_test_offset_x != 0.0f) {
+        hw2vr::proxy::configure_replay_test(cfg.debug_replay_test_offset_x);
+        HW2VR_LOG("debug: replaying every frame without VR (view offset %.2f)", cfg.debug_replay_test_offset_x);
+    }
+    HW2VR_LOG("stereo mode: %s", cfg.vr_sync_stereo ? "synchronized (replay)" : "alternating frames");
     using hw2vr::hotkeys::key_name;
     HW2VR_LOG("hotkeys (Ctrl+Shift+): %s VR on/off%s, %s recentre, %s/%s world scale, %s flat camera spike",
               key_name(cfg.key_vr_toggle), cfg.vr_autostart ? " (autostart on)" : "", key_name(cfg.key_recentre),

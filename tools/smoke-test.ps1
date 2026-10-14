@@ -35,6 +35,12 @@ Write-Host "`n=== smoke test, HUD pipeline (forced capture, no VR) ===" -Foregro
 & (Join-Path $out 'hw2vr_smoke.exe')
 if ($LASTEXITCODE) { $failed++ }
 
+# Second-eye replay without VR: every frame recorded and replayed at the swap with a shifted camera.
+Set-Content $ini "[debug]`r`nreplay_test_offset_x = 0.25`r`n" -Encoding ascii
+Write-Host "`n=== smoke test, frame replay (synchronized stereo machinery, no VR) ===" -ForegroundColor Cyan
+& (Join-Path $out 'hw2vr_smoke.exe')
+if ($LASTEXITCODE) { $failed++ }
+
 # VR autostart: with a headset (SteamVR running) VR must start; without one the proxy must fall back to flat
 # cleanly. Either way every GL check must still pass.
 Set-Content $ini "[vr]`r`nautostart = 1`r`n" -Encoding ascii

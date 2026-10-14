@@ -19,6 +19,8 @@ float g_spike_yaw_radians = 0.0f;
 float g_spike_offset_x = 0.0f;
 
 bool g_vr = false;
+bool g_debug = false;
+unsigned g_generation = 1;
 Frustum g_frustum = {};
 float g_eye_full[16];      // E
 float g_eye_rotation[16];  // E without translation, for skybox views
@@ -27,6 +29,7 @@ unsigned g_counts[4] = {};  // overrides per CameraUniform in the current frame
 float g_game_tan_half_fov_x = 1.0f / 0.5978f;  // build 12653478 at 3440x1440 until the game tells us otherwise
 
 void set_eye(const float e[16]) {
+    ++g_generation;
     std::memcpy(g_eye_full, e, sizeof g_eye_full);
     std::memcpy(g_eye_rotation, e, sizeof g_eye_rotation);
     g_eye_rotation[12] = g_eye_rotation[13] = g_eye_rotation[14] = 0.0f;
@@ -79,7 +82,15 @@ void clear_vr_eye() {
 
 bool vr_eye_active() { return g_vr; }
 
-bool active() { return g_vr || g_spike != SpikeMode::Off; }
+void set_debug_eye(const float* e) {
+    g_debug = e != nullptr;
+    if (e) set_eye(e);
+    else rebuild_spike_transform();
+}
+
+unsigned camera_generation() { return g_generation; }
+
+bool active() { return g_vr || g_debug || g_spike != SpikeMode::Off; }
 
 void apply_view_override(const float in[16], float out[16], CameraUniform source) {
     ++g_counts[static_cast<int>(source)];

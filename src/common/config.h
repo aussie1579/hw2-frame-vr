@@ -8,6 +8,7 @@ namespace hw2vr {
 struct Config {
     bool verbose = false;
     bool debug_hud_capture = false;  // capture/convert the HUD and redirect the cursor even without VR (tests)
+    float debug_replay_test_offset_x = 0.0f;  // replay every frame without VR with this view offset (tests)
 
     // VR (Tier 2). Ctrl+Shift+F8 toggles VR, F10 recentres, PgUp/PgDn change world scale.
     bool vr_autostart = false;      // start VR at the first frame instead of waiting for Ctrl+Shift+F8
@@ -16,6 +17,7 @@ struct Config {
     float vr_hud_scale = 1.0f;      // 1 = HUD spans the game's field of view (markers line up with ships)
     bool vr_hud_premultiplied = true;
     bool vr_hud_follow_head = true;  // HUD panel sits at the head's position; orientation stays with the game camera
+    bool vr_sync_stereo = true;      // [vr] stereo = sync (both eyes every frame) | afr (alternating frames)
 
     // Hotkeys, all Ctrl+Shift+<key> ([hotkeys] in the ini takes key names, see common/hotkeys.h).
     int key_vr_toggle = 0x77;  // F8

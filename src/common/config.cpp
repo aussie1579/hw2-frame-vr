@@ -32,6 +32,12 @@ Config load_config(const std::wstring& ini_path) {
     Config c;
     c.verbose = GetPrivateProfileIntW(L"debug", L"verbose", c.verbose ? 1 : 0, ini_path.c_str()) != 0;
     c.debug_hud_capture = GetPrivateProfileIntW(L"debug", L"hud_capture", 0, ini_path.c_str()) != 0;
+    c.debug_replay_test_offset_x = read_float(ini_path, L"debug", L"replay_test_offset_x", 0.0f);
+    {
+        wchar_t stereo[16];
+        GetPrivateProfileStringW(L"vr", L"stereo", L"sync", stereo, static_cast<DWORD>(std::size(stereo)), ini_path.c_str());
+        c.vr_sync_stereo = _wcsicmp(stereo, L"afr") != 0;
+    }
 
     c.vr_autostart = GetPrivateProfileIntW(L"vr", L"autostart", c.vr_autostart ? 1 : 0, ini_path.c_str()) != 0;
     c.vr_world_scale = read_float(ini_path, L"vr", L"world_scale", c.vr_world_scale);

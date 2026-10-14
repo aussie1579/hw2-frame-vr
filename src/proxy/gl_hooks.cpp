@@ -24,7 +24,10 @@
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
 #include "proxy/gl_api.h"
+#include "proxy/gl_record_hooks.h"
 #include "proxy/real_gl.h"
+#include "stereo/frame_replay.h"
+#include "stereo/gl_snapshot.h"
 #include "stereo/view_override.h"
 #include "vr/vr_frame.h"
 
@@ -73,7 +76,7 @@ struct ProgramInfo {
     GLfloat raw_mv[16] = {};
     bool has_raw_mv = false;
     bool mv_overridden = false;          // what the driver currently holds for inMatMV
-    unsigned raw_version = 0, override_frame = 0, override_version = 0;
+    unsigned raw_version = 0, override_generation = 0, override_version = 0;
 
     bool has_camera_matrix() const { return loc_view >= 0 || loc_cam >= 0; }
     bool view_space_input() const { return !has_camera_matrix() && loc_mv < 0; }  // group C
@@ -95,7 +98,6 @@ std::unordered_map<GLuint, ProgramInfo> g_programs;  // node-based: element poin
 GLuint g_current_program = 0;
 ProgramInfo* g_current = nullptr;
 GLuint g_draw_fbo = 0;
-unsigned g_frame = 1;  // bumped at every swap: the eye camera changes per frame
 
 ProgramInfo* find_program(GLuint program) {
     auto it = g_programs.find(program);
@@ -120,16 +122,18 @@ bool camera_view_source(const ProgramInfo& info, GLint loc, hw2vr::stereo::Camer
 }
 
 // Group B, just before a draw: the driver must hold E * MV when the current projection is perspective (3D) and the
-// game's raw MV otherwise (2D). Re-uploaded once per frame because E changes every frame (alternating eyes).
+// game's raw MV otherwise (2D). Re-uploaded whenever the camera moves on (every eye, every frame).
 void sync_model_view(ProgramInfo& info) {
     const bool want_override = hw2vr::stereo::active() && info.proj_is_perspective;
+    const unsigned generation = hw2vr::stereo::camera_generation();
     if (want_override) {
-        if (info.mv_overridden && info.override_frame == g_frame && info.override_version == info.raw_version) return;
+        if (info.mv_overridden && info.override_generation == generation && info.override_version == info.raw_version)
+            return;
         GLfloat eye_mv[16];
         hw2vr::stereo::apply_view_override(info.raw_mv, eye_mv, hw2vr::stereo::CameraUniform::InMatMV);
         real_glUniformMatrix4fv(info.loc_mv, 1, 0 /* no transpose */, eye_mv);
         info.mv_overridden = true;
-        info.override_frame = g_frame;
+        info.override_generation = generation;
         info.override_version = info.raw_version;
     } else if (info.mv_overridden) {
         real_glUniformMatrix4fv(info.loc_mv, 1, 0 /* no transpose */, info.raw_mv);
@@ -137,7 +141,15 @@ void sync_model_view(ProgramInfo& info) {
     }
 }
 
+// The hooks below record themselves for the second-eye replay, which runs them again (with that eye's camera)
+// through these function-pointer variables.
+void APIENTRY my_glUseProgram(GLuint program);
+void APIENTRY my_glBindFramebuffer(GLenum target, GLuint fbo);
+PFN_glUseProgram p_use_program = &my_glUseProgram;
+PFN_glBindFramebuffer p_bind_framebuffer = &my_glBindFramebuffer;
+
 void APIENTRY my_glUseProgram(GLuint program) {
+    if (hw2vr::replay::g_recording) hw2vr::replay::SigOf<p_use_program>::record<p_use_program>(program);
     g_current_program = program;
     g_current = find_program(program);
     real_glUseProgram(program);
@@ -154,6 +166,7 @@ void APIENTRY my_glDeleteProgram(GLuint program) {
 }
 
 void APIENTRY my_glBindFramebuffer(GLenum target, GLuint fbo) {
+    if (hw2vr::replay::g_recording) hw2vr::replay::SigOf<p_bind_framebuffer>::record<p_bind_framebuffer>(target, fbo);
     if (target == hw2vr::gl::FRAMEBUFFER || target == hw2vr::gl::DRAW_FRAMEBUFFER) {
         if (fbo != g_draw_fbo) hw2vr::hud::on_draw_framebuffer_change(g_draw_fbo, fbo);
         g_draw_fbo = fbo;
@@ -175,7 +188,17 @@ GLint APIENTRY my_glGetUniformLocation(GLuint program, const GLchar* name) {
     return loc;
 }
 
+void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpose, const GLfloat* value);
+void replay_uniform_matrix4fv(const hw2vr::replay::Cmd& c) {
+    my_glUniformMatrix4fv(static_cast<GLint>(c.w[0]), static_cast<GLsizei>(c.w[1]), static_cast<GLboolean>(c.w[2]),
+                          static_cast<const GLfloat*>(hw2vr::replay::payload(c.w[3])));
+}
+
 void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpose, const GLfloat* value) {
+    if (hw2vr::replay::g_recording)
+        hw2vr::replay::push({&replay_uniform_matrix4fv,
+                             {static_cast<uint32_t>(loc), static_cast<uint32_t>(count), transpose,
+                              hw2vr::replay::store(value, sizeof(GLfloat) * 16 * count)}});
     ProgramInfo* info = g_current;
     if (info && loc >= 0 && count == 1 && !transpose && value) {
         const bool hud_layer = hw2vr::hud::is_hud_fbo(g_draw_fbo);
@@ -213,11 +236,28 @@ template <class Draw>
 void game_draw(Draw draw) {
     if (g_current && g_current->has_raw_mv) sync_model_view(*g_current);
     const bool is_2d = !g_current || !g_current->proj_is_perspective;
-    if (!hw2vr::hud::should_redirect(g_draw_fbo, g_current_program, is_2d)) return draw();
-    hw2vr::hud::begin_redirect(g_draw_fbo);
-    draw();
-    hw2vr::hud::end_redirect(g_draw_fbo);
+    switch (hw2vr::hud::draw_action(g_draw_fbo, g_current_program, is_2d)) {
+        case hw2vr::hud::DrawAction::Draw:
+            draw();
+            break;
+        case hw2vr::hud::DrawAction::Redirect:
+            hw2vr::hud::begin_redirect(g_draw_fbo);
+            draw();
+            hw2vr::hud::end_redirect(g_draw_fbo);
+            break;
+        case hw2vr::hud::DrawAction::Skip:
+            break;
+    }
 }
+
+void APIENTRY draw_arrays(GLenum mode, GLint first, GLsizei count) {
+    game_draw([&] { real_glDrawArrays(mode, first, count); });
+}
+void APIENTRY draw_elements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+    game_draw([&] { real_glDrawElements(mode, count, type, indices); });
+}
+PFN_glDrawArrays p_draw_arrays = &draw_arrays;
+PFN_glDrawElements p_draw_elements = &draw_elements;
 
 // Paints a 24 px square in the window's top-left corner on the default framebuffer (spike / VR status).
 void draw_mode_indicator(HDC dc, const float rgb[3]) {
@@ -261,35 +301,77 @@ extern "C" PROC WINAPI hook_wglGetProcAddress(LPCSTR name) {
         h.logged = true;
         return reinterpret_cast<PROC>(h.hook);
     }
-    return proc;
+    return hw2vr::record::wrap_extension(name, proc);
 }
 
 extern "C" void WINAPI hook_glDrawArrays(GLenum mode, GLint first, GLsizei count) {
-    game_draw([&] { real_glDrawArrays(mode, first, count); });
+    if (hw2vr::replay::g_recording) hw2vr::replay::SigOf<p_draw_arrays>::record<p_draw_arrays>(mode, first, count);
+    draw_arrays(mode, first, count);
 }
 
 extern "C" void WINAPI hook_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
-    game_draw([&] { real_glDrawElements(mode, count, type, indices); });
+    if (hw2vr::replay::g_recording) {
+        if (!hw2vr::record::element_buffer_bound()) hw2vr::replay::mark_unreplayable("client-side index array");
+        hw2vr::replay::SigOf<p_draw_elements>::record<p_draw_elements>(mode, count, type, indices);
+    }
+    draw_elements(mode, count, type, indices);
 }
 
 extern "C" __declspec(dllexport) hw2vr::hud::TestState hw2vr_test_state() { return hw2vr::hud::test_state(); }
+extern "C" __declspec(dllexport) hw2vr::replay::Stats hw2vr_replay_stats() { return hw2vr::replay::stats(); }
+
+namespace {
+
+// [debug] replay_test_offset_x: replay every frame without VR, with a view-space x offset (tests/proxy_smoke.cpp).
+float g_debug_replay_offset = 0.0f;
+
+void debug_replay_test() {
+    if (hw2vr::replay::replayable()) {
+        float e[16];
+        hw2vr::mat4::translation(g_debug_replay_offset, 0.0f, 0.0f, e);
+        hw2vr::stereo::set_debug_eye(e);
+        hw2vr::proxy::replay_frame();
+        hw2vr::stereo::set_debug_eye(nullptr);
+    } else {
+        hw2vr::replay::note_skipped();
+    }
+    hw2vr::replay::flush_deferred_deletes();
+}
+
+}  // namespace
 
 extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
-    hw2vr::gl::load();  // first call only; needs the game's context, which is current here
+    hw2vr::replay::end_recording();  // the frame's GL stream is complete
+    hw2vr::gl::load();               // first call only; needs the game's context, which is current here
     if (RECT rc; GetClientRect(WindowFromDC(dc), &rc)) hw2vr::hud::set_target_size(rc.right, rc.bottom);
     hw2vr::hotkeys::log_seen_keys();
     hw2vr::stereo::on_frame();
-    hw2vr::vrframe::before_swap(dc);
+    hw2vr::vrframe::before_swap(dc);  // captures/replays/submits the eyes in VR
+    const bool debug_replay = g_debug_replay_offset != 0.0f && !hw2vr::vrframe::active();
+    if (debug_replay) debug_replay_test();
     if (float rgb[3]; hw2vr::stereo::mode_indicator_color(rgb) && hw2vr::gl::load()) draw_mode_indicator(dc, rgb);
     const BOOL ok = real_wglSwapBuffers(dc);
     hw2vr::vrframe::after_swap();
-    ++g_frame;
+    hw2vr::replay::begin_frame(hw2vr::vrframe::wants_recording() || debug_replay);
     return ok;
 }
 
 namespace hw2vr::proxy {
 
+void replay_frame() {
+    // Shadow tracking follows the state restore that replay::run() starts with.
+    g_current_program = replay::snapshot_program();
+    g_current = find_program(g_current_program);
+    g_draw_fbo = replay::snapshot_draw_fbo();
+    hud::set_replaying(true);
+    replay::run();
+    hud::set_replaying(false);
+}
+
+void configure_replay_test(float offset_x) { g_debug_replay_offset = offset_x; }
+
 bool init_hooks() {
+    if (!record::init()) return false;
     HMODULE gl = real_opengl32();
     real_wglGetProcAddress = reinterpret_cast<PFN_wglGetProcAddress>(GetProcAddress(gl, "wglGetProcAddress"));
     real_wglSwapBuffers = reinterpret_cast<PFN_wglSwapBuffers>(GetProcAddress(gl, "wglSwapBuffers"));
