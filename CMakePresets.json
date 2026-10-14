@@ -1,0 +1,16 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "win32",
+      "displayName": "Win32 (x86) - matches 32-bit HomeworldRM.exe",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/build/win32"
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "win32", "configuration": "Debug" },
+    { "name": "release", "configurePreset": "win32", "configuration": "RelWithDebInfo" }
+  ]
+}

@@ -11,7 +11,7 @@ VR mod for **Homeworld 2 Remastered** (HomeworldRM.exe, Homeworld Remastered Col
 
 ## Current status
 
-**Phase 0 (spikes) — in progress.** No code exists yet. Do Phase 0 before writing the proxy.
+**Phase 0 (spikes) — in progress; last item is the in-game view-override test.** The proxy skeleton exists: `src/proxy` (366 forwarded exports + `wglGetProcAddress`/`wglSwapBuffers` hooks), `src/stereo/view_override` (spike: Ctrl+Shift+F9 cycles a fixed camera yaw/offset). Build + test with `tools/smoke-test.ps1` (no game needed), deploy with `tools/install.ps1` / `tools/uninstall.ps1`.
 HWRM is **32-bit and not Large Address Aware** (2 GB) — build everything Win32 and keep the proxy lean (LAA is opt-in only, see Conventions). See `docs/FINDINGS.md`.
 
 ### Phase 0 checklist (go/no-go)
