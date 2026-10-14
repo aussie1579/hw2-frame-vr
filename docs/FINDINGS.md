@@ -52,18 +52,31 @@ Steam overlay note: `gameoverlayrenderer.dll` hooks below opengl32, so its drawi
 GL usage pattern: 93 linked programs; VAOs everywhere; per-draw `glBufferData(GL_STREAM_DRAW)` for UI; **no UBOs** (no `glBindBufferBase/Range` in gameplay); 200 `glUniformMatrix4fv` per frame, `transpose = GL_FALSE` (column-major). `glBindProgramPipeline` appears twice per frame.
 
 ## Camera
-- **Upload site:** `glUniformMatrix4fv`, every frame, re-uploaded to each program that needs it (not shared via UBO). Camera and projection are **separate uniforms**, never pre-multiplied on the CPU, and model matrices never contain the camera.
-- **Uniform naming convention** (from `glGetUniformLocation` at link time, consistent across all 93 programs):
-  - `inMatV` / `inMatC` → **camera view** (world → view). Two shader conventions exist: `gl_Position = inMatP * inMatV * inMatM * pos` and `gl_Position = inMatP * inMatC * inMatMV * pos` (here `inMatMV` is really model→world despite the name).
-  - `inMatP` → projection (perspective for 3D, ortho for HUD/post).
-  - `inMatM` / `inMatMV` → model → world.
-  - `inMatFL` / `inMatKL` → fill / key light matrices (must not be touched).
-  - `inCamera` exists in 3 programs (not yet examined).
+- **Upload site:** `glUniformMatrix4fv`, every frame, re-uploaded to each program that needs it (not shared via UBO). Camera and projection are **separate uniforms**, never pre-multiplied on the CPU. **Exception:** some effects (the ship light glows) are transformed into view space **on the CPU** and drawn with only `inMatP` — see group C below.
+- **Uniform naming** (from `glGetUniformLocation` at link time): `inMatV`, `inMatC`, `inMatP`, `inMatM`, `inMatMV`, `inMatFL`/`inMatKL` (fill / key light — never touch), plus `vec4 inCamera` (camera world position) in programs 58, 60, 78.
+- **Where the camera enters — all 93 programs classified** (vertex shaders read from the trace; note 82 of the 274 `glShaderSource` calls use apitrace's `string = &"..."` form, which an earlier pass missed):
+
+  | Group | Programs | Shader form | Camera override |
+  |---|---|---|---|
+  | A | 56 | `P * V * M` or `P * C * MV` (`inMatMV` = model→world here) | `inMatV`/`inMatC` → `E·V` |
+  | B | 31 | `P * MV` only (`PVM = inMatP*inMatMV`, 28 programs) | `inMatMV` → `E·MV` **only if that program's `inMatP` is perspective**; with an ortho `inMatP` it is 2D HUD/post → untouched |
+  | C | 4 (9, 54, 55, 62) | `P * pos` only — vertices already in view space | `inMatP` → `P·E` if perspective (progs 62, 9); ortho → 2D HUD (54, 55) → untouched |
+  | D | 2 (36, 37) | light/shadow space (`inMatM`, `inMatFL`, `inMatKL`) | untouched |
+
+  - **Prog 62 = light glows/flares**, one draw right after the main scene (pass P05): `screenCen = inMatP*inCen; screenCorner = inMatP*inPos` with CPU-computed view-space positions, sized in screen space via `inWindow`. Missed by the first spike → lights rendered where the *original* camera saw them.
+  - 28 group-A programs reconstruct the eye position with `inverse(inMatV)` (reflections), so they follow the override automatically. `inCamera` (58, 60, 78: billboard "pull towards camera") does **not** — Tier 2 must also override it per eye (only matters for translation, not yaw).
+- Locations differ per program (e.g. `inMatV` is loc 118 in prog 41, loc 117 in prog 38, loc 1 in prog 40), so the proxy maps location→name per program by hooking `glGetUniformLocation`. Program IDs are runtime-assigned — key on names, never on IDs/locations. No program is ever relinked.
   - Locations differ per program (e.g. `inMatV` is loc 118 in prog 41, loc 117 in prog 38, loc 1 in prog 40), so the proxy must map location→name per program by hooking `glGetUniformLocation` (or querying `glGetActiveUniform` after link). Program IDs are runtime-assigned — key on names, never on IDs/locations.
 - **Main projection** (frame 215000): `[0.5978 0 0 0 | 0 1.428 0 0 | 0 0 -1 -1 | 0 0 -6 0]` → **infinite far plane, near = 3**, aspect 2.389 (= 3440/1440), vfov ≈ 70°, hfov ≈ 118°. World coordinates are O(10⁴) units (camera at ≈ (-2479, -6475, 6649) in view-translation terms).
 - **Skybox** uses its own projection (`[0.8041 0 0 0 | 0 1.921 0 0 | 0 0 -1.001 -1 | 0 0 -4.002 0]`) and a rotation-only `inMatC` (prog 17 adds a tiny parallax translation). Per eye it needs head *rotation* only; its own FOV must be swapped for the eye FOV too.
-- **Override plan this implies:** in the `glUniformMatrix4fv` hook, for uniforms named `inMatV`/`inMatC` substitute `eye × view` (rotation-only eye transform when the uploaded matrix has zero translation, i.e. sky); for `inMatP` that is perspective (m[11] == −1) substitute the per-eye asymmetric projection (keep infinite far, near 3 × world-scale). Leave ortho `inMatP`, `inMatM`/`inMatMV`, `inMatFL`/`inMatKL` alone.
+- **Override plan this implies (Tier 2):** per eye, apply groups A–C above with `E = eye × head pose` (rotation-only `E` when the uploaded view has no translation, i.e. sky); replace every perspective `inMatP` (m[11] == −1) with the per-eye asymmetric projection (keep infinite far, near 3 × world-scale) — for group C that becomes `P_eye·E`; set `inCamera` to the eye position. Leave ortho `inMatP`, `inMatM`, `inMatFL`/`inMatKL` alone.
+- **Mouse picking uses the game's own (un-overridden) camera** — confirmed in the spike (selection offset by exactly the override). Tier 3 pointer→mouse must therefore project the controller ray with the game's *original* camera, which the proxy sees on every upload.
 - Camera struct (CE/Ghidra): not needed yet.
+
+## View-override spike (Phase 0 item 5)
+- **Run 1** (2026-10-14, proxy 0.1.0, yaw mode only — the log shows a single mode change): scene "mostly okay" and moved as one; HUD unaffected; **ship light glows offset beside their ships** (group C, prog 62, not yet handled); ship selection offset by the same amount (expected, see picking above). One frame overrode `inMatV` ×5, `inMatC` ×3, `inMatMV`-as-view ×2.
+- Fix: group C handling (`P·E`) + on-screen mode square (top-left: red yaw, green offset, blue both). Covered by `tools/smoke-test.ps1`.
+- **Run 2:** pending.
 
 ## Go / no-go
 - Decision: **Provisional GO** (2026-10-14, build 12653478) — final once the view-override spike works.

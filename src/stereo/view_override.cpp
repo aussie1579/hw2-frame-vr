@@ -20,7 +20,7 @@ float g_eye_full[16];      // E = Ry(yaw) * T(-offset_x, 0, 0)
 float g_eye_rotation[16];  // E without translation, for skybox views
 bool g_hotkey_down = false;
 unsigned g_frames_in_mode = 0;
-unsigned g_counts[3] = {};  // overrides per ViewSource in the current frame
+unsigned g_counts[4] = {};  // overrides per CameraUniform in the current frame
 
 void multiply(const float a[16], const float b[16], float out[16]) {
     for (int c = 0; c < 4; ++c)
@@ -66,8 +66,8 @@ void configure(float yaw_degrees, float offset_x, int start_mode) {
 void on_frame() {
     // Report what the first full frame in a new mode actually overrode.
     if (g_mode != Mode::Off && ++g_frames_in_mode == 1)
-        HW2VR_LOG("spike [%s]: overrode inMatV x%u, inMatC x%u, inMatMV-as-view x%u in one frame",
-                  kModeNames[static_cast<int>(g_mode)], g_counts[0], g_counts[1], g_counts[2]);
+        HW2VR_LOG("spike [%s]: overrode inMatV x%u, inMatC x%u, inMatMV-as-view x%u, view-space inMatP x%u in one frame",
+                  kModeNames[static_cast<int>(g_mode)], g_counts[0], g_counts[1], g_counts[2], g_counts[3]);
     std::memset(g_counts, 0, sizeof g_counts);
 
     const bool down = hotkey_pressed();
@@ -82,10 +82,22 @@ void on_frame() {
 
 bool override_active() { return g_mode != Mode::Off; }
 
-void apply_view_override(const float in[16], float out[16], ViewSource source) {
+void apply_view_override(const float in[16], float out[16], CameraUniform source) {
     ++g_counts[static_cast<int>(source)];
     const bool rotation_only = std::fabs(in[12]) < 1.0f && std::fabs(in[13]) < 1.0f && std::fabs(in[14]) < 1.0f;
     multiply(rotation_only ? g_eye_rotation : g_eye_full, in, out);
+}
+
+void apply_projection_override(const float proj[16], float out[16]) {
+    ++g_counts[static_cast<int>(CameraUniform::InMatP)];
+    multiply(proj, g_eye_full, out);
+}
+
+bool mode_indicator_color(float rgb[3]) {
+    static constexpr float kColors[4][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0.4f, 1}};  // -, yaw, offset, both
+    if (g_mode == Mode::Off) return false;
+    std::memcpy(rgb, kColors[static_cast<int>(g_mode)], sizeof kColors[0]);
+    return true;
 }
 
 }  // namespace hw2vr::stereo

@@ -10,10 +10,13 @@ $out   = Join-Path $root "build\win32\$Config"
 $ini   = Join-Path $out 'hw2vr.ini'
 
 if (-not $NoBuild) {
-    & $cmake --preset win32 | Out-Null
-    $preset = if ($Config -eq 'Debug') { 'debug' } else { 'release' }
-    & $cmake --build --preset $preset
-    if ($LASTEXITCODE) { throw "build failed" }
+    Push-Location $root  # presets are read from the current directory
+    try {
+        & $cmake --preset win32 | Out-Null
+        $preset = if ($Config -eq 'Debug') { 'debug' } else { 'release' }
+        & $cmake --build --preset $preset
+        if ($LASTEXITCODE) { throw "build failed" }
+    } finally { Pop-Location }
 }
 
 $failed = 0

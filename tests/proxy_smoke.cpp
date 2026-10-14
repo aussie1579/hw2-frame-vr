@@ -86,20 +86,27 @@ struct Expectation {
     int mode = 0;
     float yaw_degrees = 10, offset_x = 150;
 
-    void camera(const float in[16], float out[16]) const {
-        if (mode == 0) {
-            std::memcpy(out, in, 64);
-            return;
-        }
+    void eye(bool with_translation, float out[16]) const {
         const float a = (mode & 1) ? yaw_degrees * 3.14159265f / 180.0f : 0.0f;
-        const bool sky = std::fabs(in[12]) < 1 && std::fabs(in[13]) < 1 && std::fabs(in[14]) < 1;
-        const float x = (mode & 2) && !sky ? offset_x : 0.0f;
+        const float x = (mode & 2) && with_translation ? offset_x : 0.0f;
         const float c = std::cos(a), s = std::sin(a);
         const float rotation[16] = {c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1};
         const float translation[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -x, 0, 0, 1};
-        float eye[16];
-        multiply(rotation, translation, eye);
-        multiply(eye, in, out);
+        multiply(rotation, translation, out);
+    }
+    void camera(const float in[16], float out[16]) const {
+        if (mode == 0) return void(std::memcpy(out, in, 64));
+        const bool sky = std::fabs(in[12]) < 1 && std::fabs(in[13]) < 1 && std::fabs(in[14]) < 1;
+        float e[16];
+        eye(!sky, e);
+        multiply(e, in, out);
+    }
+    // Projection for programs whose vertices are already in view space: P * E.
+    void view_space_projection(const float in[16], float out[16]) const {
+        if (mode == 0) return void(std::memcpy(out, in, 64));
+        float e[16];
+        eye(true, e);
+        multiply(in, e, out);
     }
 };
 
@@ -208,12 +215,15 @@ int main() {
           "wglGetProcAddress returns proxy hooks for the 5 tracked functions");
     check(gl.create_shader && module_of(gl.create_shader) != proxy, "untracked functions (glCreateShader) pass through");
 
-    // The four shader conventions seen in the game (docs/FINDINGS.md).
+    // The shader conventions seen in the game (docs/FINDINGS.md, groups A-C).
     const GLuint scene_v = gl.build("void main() { gl_Position = inMatP * inMatV * inMatM * vec4(inPos, 1.0); }\n");
     const GLuint scene_c = gl.build("void main() { gl_Position = inMatP * inMatC * inMatMV * vec4(inPos, 1.0); }\n");
     const GLuint hud = gl.build("void main() { gl_Position = inMatP * inMatMV * vec4(inPos, 1.0); }\n");
     const GLuint mv_as_view = gl.build("void main() { gl_Position = inMatP * inMatMV * vec4(inPos, 1.0); }\n");
-    check(scene_v && scene_c && hud && mv_as_view, "4 test programs linked (through hooked glLinkProgram)");
+    const GLuint view_space = gl.build("void main() { gl_Position = inMatP * vec4(inPos, 1.0); }\n");
+    const GLuint hud_p_only = gl.build("void main() { gl_Position = inMatP * vec4(inPos, 1.0); }\n");
+    check(scene_v && scene_c && hud && mv_as_view && view_space && hud_p_only,
+          "6 test programs linked (through hooked glLinkProgram)");
 
     float want[16];
     gl.use_program(scene_v);
@@ -239,12 +249,20 @@ int main() {
     expect.camera(kView, want);
     check(gl.upload_reads_back(mv_as_view, "inMatMV", kView, want),
           "P*MV program with perspective inMatP: inMatMV treated as camera");
+
+    gl.use_program(view_space);
+    expect.view_space_projection(kPerspective, want);
+    check(gl.upload_reads_back(view_space, "inMatP", kPerspective, want),
+          "P-only program, perspective (view-space input, e.g. light glows): inMatP becomes P*E");
+    gl.use_program(hud_p_only);
+    check(gl.upload_reads_back(hud_p_only, "inMatP", kOrtho, kOrtho), "P-only program, ortho (2D HUD): untouched");
     check(glGetError() == GL_NO_ERROR, "no GL errors");
 
-    check(wglSwapBuffers(dc) == TRUE, "wglSwapBuffers (hooked export)");
+    check(wglSwapBuffers(dc) == TRUE, "wglSwapBuffers (hooked export; draws the mode square when on)");
+    check(glGetError() == GL_NO_ERROR, "no GL errors after the mode square");
     check(SwapBuffers(dc) == TRUE, "gdi32 SwapBuffers");
 
-    for (GLuint p : {scene_v, scene_c, hud, mv_as_view}) gl.delete_program(p);
+    for (GLuint p : {scene_v, scene_c, hud, mv_as_view, view_space, hud_p_only}) gl.delete_program(p);
     wglMakeCurrent(nullptr, nullptr);
     wglDeleteContext(ctx);
     ReleaseDC(wnd, dc);
