@@ -16,11 +16,11 @@ HWRM is **32-bit and not Large Address Aware** (2 GB) — build everything Win32
 
 ### Phase 0 checklist (go/no-go)
 - [x] Record HomeworldRM.exe bitness (32/64), file version and Steam build ID → `docs/FINDINGS.md` *(x86, v2.303 / CL 3409635, Steam build 12653478)*
-- [ ] Record GL context type: core vs compatibility profile, GL version actually created
+- [x] Record GL context type: core vs compatibility profile, GL version actually created *(3.3 compatibility via wglCreateContextAttribsARB, vsync off; game itself uses no legacy GL)*
 - [x] **Dormant VR check:** *(negative on build 12653478 — no OpenVR/OpenXR/LibOVR code; details in FINDINGS)* search the binary for `openvr_api`, `IVRSystem`, `IVRCompositor`, `VR_Init`, "vive", "oculus", "steamvr", VR-ish command-line flags, and VR-related Lua bindings. Gearbox reportedly tested a VR spectator mode in 2016. If anything turns up, chase it before anything else.
-- [ ] RenderDoc capture of a skirmish frame: identify main scene pass, where view/projection matrices are uploaded (`glUniformMatrix4fv` / UBO), shadow/glow/post passes, and HUD/sensors-manager passes
+- [x] ~~RenderDoc~~ apitrace capture of a skirmish frame: identify main scene pass, where view/projection matrices are uploaded (`glUniformMatrix4fv` / UBO), shadow/glow/post passes, and HUD/sensors-manager passes *(pass map + `inMatV`/`inMatC`/`inMatP` uniforms; HUD in its own FBO — see FINDINGS)*
 - [ ] Prove one view-matrix override shifts the scene cleanly without breaking HUD
-- [ ] Write the go/no-go call in `docs/FINDINGS.md`
+- [x] Write the go/no-go call in `docs/FINDINGS.md` *(provisional GO — finalize after the override spike)*
 
 **Go if** the camera matrix is identifiable + overridable and HUD draws are distinguishable. **No-go/rethink if** matrices are baked per-object CPU-side or HUD/scene draws interleave unpredictably.
 
