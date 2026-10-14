@@ -14,6 +14,7 @@ enum class SpikeMode { Off, Yaw, Offset, YawAndOffset };
 constexpr const char* kSpikeNames[] = {"off", "yaw", "offset", "yaw+offset"};
 
 SpikeMode g_spike = SpikeMode::Off;
+int g_spike_hotkey = 0x78;  // F9
 float g_spike_yaw_radians = 0.0f;
 float g_spike_offset_x = 0.0f;
 
@@ -43,7 +44,8 @@ void rebuild_spike_transform() {
 
 }  // namespace
 
-void configure_spike(float yaw_degrees, float offset_x, int start_mode) {
+void configure_spike(float yaw_degrees, float offset_x, int start_mode, int hotkey_vk) {
+    g_spike_hotkey = hotkey_vk;
     g_spike_yaw_radians = yaw_degrees * 3.14159265f / 180.0f;
     g_spike_offset_x = offset_x;
     g_spike = static_cast<SpikeMode>(start_mode & 3);
@@ -56,7 +58,7 @@ void on_frame() {
                   kSpikeNames[static_cast<int>(g_spike)], g_counts[0], g_counts[1], g_counts[2], g_counts[3]);
     std::memset(g_counts, 0, sizeof g_counts);
 
-    if (hotkeys::pressed(0x78 /* VK_F9 */) && !g_vr) {
+    if (hotkeys::pressed(g_spike_hotkey) && !g_vr) {
         g_spike = static_cast<SpikeMode>((static_cast<int>(g_spike) + 1) % 4);
         g_frames_in_mode = 0;
         rebuild_spike_transform();

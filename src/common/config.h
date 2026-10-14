@@ -15,6 +15,13 @@ struct Config {
     float vr_hud_scale = 1.0f;      // 1 = HUD spans the game's field of view (markers line up with ships)
     bool vr_hud_premultiplied = true;
 
+    // Hotkeys, all Ctrl+Shift+<key> ([hotkeys] in the ini takes key names, see common/hotkeys.h).
+    int key_vr_toggle = 0x77;  // F8
+    int key_recentre = 0x79;   // F10
+    int key_scale_up = 0x21;   // PageUp
+    int key_scale_down = 0x22; // PageDown
+    int key_spike = 0x78;      // F9
+
     // Phase 0 view-override spike, flat screen only (Ctrl+Shift+F9 cycles off -> yaw -> offset -> yaw+offset).
     float spike_yaw_degrees = 10.0f;  // camera yaw applied in view space
     float spike_offset_x = 150.0f;    // camera moves right by this many world units (eye-offset stand-in)

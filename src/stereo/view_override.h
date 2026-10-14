@@ -15,7 +15,8 @@ enum class CameraUniform {
     InMatP,   // projection of view-space input (CPU-transformed vertices, e.g. light glows) -> P * E
 };
 
-void configure_spike(float yaw_degrees, float offset_x, int start_mode);  // start_mode: 0 off, 1 yaw, 2 offset, 3 both
+// start_mode: 0 off, 1 yaw, 2 offset, 3 both; hotkey_vk: Ctrl+Shift+<vk> cycles the mode.
+void configure_spike(float yaw_degrees, float offset_x, int start_mode, int hotkey_vk);
 void on_frame();  // once per wglSwapBuffers: spike hotkey + per-frame stats
 
 void set_vr_eye(const float eye_from_game_camera[16], const Frustum& frustum);

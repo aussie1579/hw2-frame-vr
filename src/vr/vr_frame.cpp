@@ -105,16 +105,16 @@ void place_hud() {
 }
 
 void handle_hotkeys() {
-    if (hotkeys::pressed(VK_F8) || g_autostart_pending) {
+    if (hotkeys::pressed(g_settings.key_toggle) || g_autostart_pending) {
         g_autostart_pending = false;
         vr::running() ? stop_vr() : start_vr();
     }
     if (!vr::running()) return;
-    if (hotkeys::pressed(VK_F10)) {
+    if (hotkeys::pressed(g_settings.key_recentre)) {
         g_recentre = true;
         HW2VR_LOG("vr: recentre");
     }
-    const bool scale_up = hotkeys::pressed(VK_PRIOR), scale_down = hotkeys::pressed(VK_NEXT);
+    const bool scale_up = hotkeys::pressed(g_settings.key_scale_up), scale_down = hotkeys::pressed(g_settings.key_scale_down);
     if (scale_up || scale_down) {
         g_settings.world_scale *= scale_up ? 1.25f : 0.8f;
         HW2VR_LOG("vr: world scale %.1f game units per metre", g_settings.world_scale);

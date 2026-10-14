@@ -19,6 +19,7 @@
 #include <type_traits>
 #include <unordered_map>
 
+#include "common/hotkeys.h"
 #include "common/log.h"
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
@@ -216,6 +217,7 @@ extern "C" PROC WINAPI hook_wglGetProcAddress(LPCSTR name) {
 }
 
 extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
+    hw2vr::hotkeys::log_seen_keys();
     hw2vr::stereo::on_frame();
     hw2vr::vrframe::before_swap(dc);
     if (float rgb[3]; hw2vr::stereo::mode_indicator_color(rgb) && hw2vr::gl::load()) draw_mode_indicator(dc, rgb);

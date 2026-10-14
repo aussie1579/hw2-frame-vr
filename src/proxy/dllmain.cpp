@@ -3,6 +3,7 @@
 #include <string>
 
 #include "common/config.h"
+#include "common/hotkeys.h"
 #include "common/log.h"
 #include "common/version.h"
 #include "proxy/gl_hooks.h"
@@ -31,16 +32,22 @@ bool init(HMODULE self) {
     // instead of crashing on the first GL call.
     if (!hw2vr::proxy::load_real_opengl32() || !hw2vr::proxy::init_hooks()) return false;
 
-    hw2vr::stereo::configure_spike(cfg.spike_yaw_degrees, cfg.spike_offset_x, cfg.spike_start_mode);
+    hw2vr::stereo::configure_spike(cfg.spike_yaw_degrees, cfg.spike_offset_x, cfg.spike_start_mode, cfg.key_spike);
     hw2vr::vrframe::Settings vr;
     vr.autostart = cfg.vr_autostart;
     vr.world_scale = cfg.vr_world_scale;
     vr.hud_distance = cfg.vr_hud_distance;
     vr.hud_scale = cfg.vr_hud_scale;
     vr.hud_premultiplied = cfg.vr_hud_premultiplied;
-    hw2vr::vrframe::configure(vr, dir);  // VR itself starts on the render thread (Ctrl+Shift+F8 or autostart)
-    HW2VR_LOG("hotkeys (Ctrl+Shift+): F8 VR on/off%s, F10 recentre, PgUp/PgDn world scale, F9 flat camera spike",
-              cfg.vr_autostart ? " (autostart on)" : "");
+    vr.key_toggle = cfg.key_vr_toggle;
+    vr.key_recentre = cfg.key_recentre;
+    vr.key_scale_up = cfg.key_scale_up;
+    vr.key_scale_down = cfg.key_scale_down;
+    hw2vr::vrframe::configure(vr, dir);  // VR itself starts on the render thread (hotkey or autostart)
+    using hw2vr::hotkeys::key_name;
+    HW2VR_LOG("hotkeys (Ctrl+Shift+): %s VR on/off%s, %s recentre, %s/%s world scale, %s flat camera spike",
+              key_name(cfg.key_vr_toggle), cfg.vr_autostart ? " (autostart on)" : "", key_name(cfg.key_recentre),
+              key_name(cfg.key_scale_up), key_name(cfg.key_scale_down), key_name(cfg.key_spike));
     return true;
 }
 
