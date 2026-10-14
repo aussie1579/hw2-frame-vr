@@ -211,8 +211,8 @@ int main() {
     const Gl gl;
     check(module_of(gl.use_program) == proxy && module_of(gl.get_uniform_location) == proxy &&
               module_of(gl.uniform_matrix4fv) == proxy && module_of(gl.link_program) == proxy &&
-              module_of(gl.delete_program) == proxy,
-          "wglGetProcAddress returns proxy hooks for the 5 tracked functions");
+              module_of(gl.delete_program) == proxy && module_of(wglGetProcAddress("glBindFramebuffer")) == proxy,
+          "wglGetProcAddress returns proxy hooks for the 6 tracked functions");
     check(gl.create_shader && module_of(gl.create_shader) != proxy, "untracked functions (glCreateShader) pass through");
 
     // The shader conventions seen in the game (docs/FINDINGS.md, groups A-C).

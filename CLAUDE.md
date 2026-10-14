@@ -11,7 +11,9 @@ VR mod for **Homeworld 2 Remastered** (HomeworldRM.exe, Homeworld Remastered Col
 
 ## Current status
 
-**Phase 0 (spikes) — done, GO (2026-10-14).** Next per the tiers: Phase 1 baseline (theater mode + Frame binding), then Tier 2. The proxy skeleton exists: `src/proxy` (366 forwarded exports + `wglGetProcAddress`/`wglSwapBuffers` hooks), `src/stereo/view_override` (spike: Ctrl+Shift+F9 cycles a fixed camera yaw/offset). Build + test with `tools/smoke-test.ps1` (no game needed), deploy with `tools/install.ps1` / `tools/uninstall.ps1`.
+**Phase 0 (spikes) — done, GO (2026-10-14).** Brendo chose to skip Phase 1 and go straight to Tier 2.
+**Tier 2 (stereo MVP) — v0.2.0 built, awaiting first headset test.** AFR stereo (`src/vr/vr_frame`), per-eye view + projection (`src/stereo`), HUD lifted from its FBO onto an OpenVR overlay fixed in game-camera space (`src/hud`), OpenVR loaded at runtime from `third_party/openvr` (v2.15.6, win32). Ctrl+Shift+F8 toggles VR. **No multiplayer guard yet** — VR is opt-in per session until there is one.
+The proxy skeleton exists: `src/proxy` (366 forwarded exports + `wglGetProcAddress`/`wglSwapBuffers` hooks), `src/stereo/view_override` (spike: Ctrl+Shift+F9 cycles a fixed camera yaw/offset). Build + test with `tools/smoke-test.ps1` (no game needed), deploy with `tools/install.ps1` / `tools/uninstall.ps1`.
 HWRM is **32-bit and not Large Address Aware** (2 GB) — build everything Win32 and keep the proxy lean (LAA is opt-in only, see Conventions). See `docs/FINDINGS.md`.
 
 ### Phase 0 checklist (go/no-go)

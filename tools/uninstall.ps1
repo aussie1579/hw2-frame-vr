@@ -25,10 +25,19 @@ if (Test-Path $backup) {
         Write-Host "Restored the original opengl32.dll from $Hw2vrBackupName"
     }
 }
-if ($Purge) {
-    foreach ($f in 'hw2vr.ini', 'hw2vr.log') { Remove-Item (Join-Path $GameDir $f) -ErrorAction SilentlyContinue }
+$manifest = Join-Path $GameDir $Hw2vrManifest
+$placed = if (Test-Path $manifest) { @(Get-Content $manifest) } else { @() }
+$openvr = Join-Path $GameDir 'openvr_api.dll'
+if ('openvr_api.dll' -in $placed) { Remove-Item $openvr -ErrorAction SilentlyContinue }
+$openvrBackup = Join-Path $GameDir $Hw2vrOpenvrBackupName
+if ((Test-Path $openvrBackup) -and -not (Test-Path $openvr)) {
+    Rename-Item $openvrBackup 'openvr_api.dll'
+    Write-Host "Restored the original openvr_api.dll from $Hw2vrOpenvrBackupName"
 }
-Remove-Item (Join-Path $GameDir $Hw2vrManifest) -ErrorAction SilentlyContinue
+if ($Purge) {
+    foreach ($f in 'hw2vr.ini', 'hw2vr.ini.bak', 'hw2vr.log') { Remove-Item (Join-Path $GameDir $f) -ErrorAction SilentlyContinue }
+}
+Remove-Item $manifest -ErrorAction SilentlyContinue
 
 $left = @('hw2vr.ini', 'hw2vr.log' | Where-Object { Test-Path (Join-Path $GameDir $_) })
 Write-Host ("HW2 Frame VR removed from $GameDir" + $(if ($left) { " (kept: $($left -join ', '); -Purge removes them)" } else { '' }))

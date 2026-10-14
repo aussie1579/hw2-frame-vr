@@ -1,13 +1,15 @@
-// Hooks for the two exports we implement (wglGetProcAddress, wglSwapBuffers) and the GL 2.0 entry points the
+// Hooks for the two exports we implement (wglGetProcAddress, wglSwapBuffers) and the GL 2.0+ entry points the
 // game fetches through wglGetProcAddress. Everything runs on the game's render thread.
 //
-// Where the camera enters a shader (docs/FINDINGS.md "Camera", all 93 programs of build 12653478):
+// Where the camera enters a shader (docs/FINDINGS.md "Camera", all programs of build 12653478):
 //   A. inMatV or inMatC present           -> that uniform is the camera view          (E * V)
 //   B. only inMatMV + inMatP              -> inMatMV is model-view, if inMatP is perspective (E * MV)
 //   C. only inMatP                        -> vertices are already in view space (CPU-transformed, e.g. the light
 //                                            glows, prog "screenCorner"), if inMatP is perspective (P * E)
 // B and C programs with an ortho inMatP are 2D HUD / post-processing and stay untouched. "Perspective" comes from
-// the program's most recent inMatP upload.
+// the program's most recent inMatP upload. In VR every perspective inMatP also gets the eye frustum.
+// Nothing is overridden while the game draws into its HUD framebuffer: the HUD layer keeps the game's own camera
+// so it matches the 2D markers the game positions on the CPU (it is shown on an overlay fixed in that camera's frame).
 #include "proxy/gl_hooks.h"
 
 #include <windows.h>
@@ -18,9 +20,14 @@
 #include <unordered_map>
 
 #include "common/log.h"
+#include "common/mat4.h"
+#include "hud/hud_layer.h"
+#include "proxy/gl_api.h"
 #include "proxy/real_gl.h"
 #include "stereo/view_override.h"
+#include "vr/vr_frame.h"
 
+using GLenum = unsigned int;
 using GLint = int;
 using GLuint = unsigned int;
 using GLsizei = int;
@@ -37,6 +44,7 @@ using PFN_glGetUniformLocation = GLint(APIENTRY*)(GLuint, const GLchar*);
 using PFN_glUseProgram = void(APIENTRY*)(GLuint);
 using PFN_glLinkProgram = void(APIENTRY*)(GLuint);
 using PFN_glDeleteProgram = void(APIENTRY*)(GLuint);
+using PFN_glBindFramebuffer = void(APIENTRY*)(GLenum, GLuint);
 
 PFN_wglGetProcAddress real_wglGetProcAddress = nullptr;
 PFN_wglSwapBuffers real_wglSwapBuffers = nullptr;
@@ -45,6 +53,7 @@ PFN_glGetUniformLocation real_glGetUniformLocation = nullptr;
 PFN_glUseProgram real_glUseProgram = nullptr;
 PFN_glLinkProgram real_glLinkProgram = nullptr;
 PFN_glDeleteProgram real_glDeleteProgram = nullptr;
+PFN_glBindFramebuffer real_glBindFramebuffer = nullptr;
 
 struct ProgramInfo {
     GLint loc_view = -1;  // inMatV
@@ -71,6 +80,7 @@ constexpr TrackedUniform kTracked[] = {
 std::unordered_map<GLuint, ProgramInfo> g_programs;  // node-based: element pointers survive rehashing
 GLuint g_current_program = 0;
 ProgramInfo* g_current = nullptr;
+GLuint g_draw_fbo = 0;
 
 ProgramInfo* find_program(GLuint program) {
     auto it = g_programs.find(program);
@@ -82,7 +92,8 @@ void forget_program(GLuint program) {
     if (program == g_current_program) g_current = nullptr;
 }
 
-bool is_perspective(const GLfloat* m) { return std::fabs(m[11] + 1.0f) < 1e-4f && std::fabs(m[15]) < 1e-4f; }
+// The game's main camera projection has an infinite far plane (m[10] == -1); the skybox's is finite.
+bool is_main_projection(const GLfloat* m) { return std::fabs(m[10] + 1.0f) < 1e-4f; }
 
 // Does this upload carry the camera view (groups A and B in the file comment)?
 bool camera_view_source(const ProgramInfo& info, GLint loc, hw2vr::stereo::CameraUniform* source) {
@@ -110,6 +121,14 @@ void APIENTRY my_glDeleteProgram(GLuint program) {
     real_glDeleteProgram(program);
 }
 
+void APIENTRY my_glBindFramebuffer(GLenum target, GLuint fbo) {
+    if (target == hw2vr::gl::FRAMEBUFFER || target == hw2vr::gl::DRAW_FRAMEBUFFER) {
+        if (fbo != g_draw_fbo) hw2vr::hud::on_draw_framebuffer_change(g_draw_fbo, fbo);
+        g_draw_fbo = fbo;
+    }
+    real_glBindFramebuffer(target, fbo);
+}
+
 GLint APIENTRY my_glGetUniformLocation(GLuint program, const GLchar* name) {
     const GLint loc = real_glGetUniformLocation(program, name);
     if (loc < 0 || !name) return loc;
@@ -127,67 +146,43 @@ GLint APIENTRY my_glGetUniformLocation(GLuint program, const GLchar* name) {
 void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpose, const GLfloat* value) {
     ProgramInfo* info = g_current;
     if (info && loc >= 0 && count == 1 && !transpose && value) {
+        const bool hud_layer = hw2vr::hud::is_hud_fbo(g_draw_fbo);
+        const bool override_camera = hw2vr::stereo::active() && !hud_layer;
+        GLfloat replaced[16];
         if (loc == info->loc_proj) {
-            info->proj_is_perspective = is_perspective(value);
-            if (hw2vr::stereo::override_active() && info->proj_is_perspective && info->view_space_input()) {
-                GLfloat eye_proj[16];
-                hw2vr::stereo::apply_projection_override(value, eye_proj);
-                real_glUniformMatrix4fv(loc, 1, transpose, eye_proj);
-                return;
+            info->proj_is_perspective = hw2vr::mat4::is_perspective(value);
+            if (!info->proj_is_perspective) {
+                hw2vr::hud::note_ortho_projection(g_draw_fbo);
+            } else {
+                if (!hud_layer && is_main_projection(value)) hw2vr::stereo::note_game_projection(value);
+                if (override_camera &&
+                    hw2vr::stereo::apply_projection_override(value, replaced, info->view_space_input())) {
+                    real_glUniformMatrix4fv(loc, 1, transpose, replaced);
+                    return;
+                }
             }
-        } else if (hw2vr::stereo::CameraUniform source;
-                   hw2vr::stereo::override_active() && camera_view_source(*info, loc, &source)) {
-            GLfloat eye_view[16];
-            hw2vr::stereo::apply_view_override(value, eye_view, source);
-            real_glUniformMatrix4fv(loc, 1, transpose, eye_view);
+        } else if (hw2vr::stereo::CameraUniform source; override_camera && camera_view_source(*info, loc, &source)) {
+            hw2vr::stereo::apply_view_override(value, replaced, source);
+            real_glUniformMatrix4fv(loc, 1, transpose, replaced);
             return;
         }
     }
     real_glUniformMatrix4fv(loc, count, transpose, value);
 }
 
-// GL 1.1 entry points (plain opengl32 exports) for the spike's on-screen mode square.
-struct Gl11 {
-    void(APIENTRY* GetIntegerv)(unsigned, GLint*);
-    void(APIENTRY* GetFloatv)(unsigned, GLfloat*);
-    void(APIENTRY* GetBooleanv)(unsigned, GLboolean*);
-    GLboolean(APIENTRY* IsEnabled)(unsigned);
-    void(APIENTRY* Enable)(unsigned);
-    void(APIENTRY* Disable)(unsigned);
-    void(APIENTRY* Scissor)(GLint, GLint, GLsizei, GLsizei);
-    void(APIENTRY* ColorMask)(GLboolean, GLboolean, GLboolean, GLboolean);
-    void(APIENTRY* ClearColor)(GLfloat, GLfloat, GLfloat, GLfloat);
-    void(APIENTRY* Clear)(unsigned);
-} g_gl11 = {};
-
-// Paints a 24 px square in the window's top-left corner on the default framebuffer, restoring all state it touches.
+// Paints a 24 px square in the window's top-left corner on the default framebuffer (spike / VR status).
 void draw_mode_indicator(HDC dc, const float rgb[3]) {
-    constexpr unsigned kDrawFramebufferBinding = 0x8CA6, kScissorTest = 0x0C11, kScissorBox = 0x0C10,
-                       kColorClearValue = 0x0C22, kColorWritemask = 0x0C23, kColorBufferBit = 0x4000;
     constexpr int kSize = 24, kMargin = 8;
-    GLint fbo = 0;
-    g_gl11.GetIntegerv(kDrawFramebufferBinding, &fbo);
     RECT rc;
-    if (fbo != 0 || !GetClientRect(WindowFromDC(dc), &rc)) return;
-
-    const GLboolean scissor_on = g_gl11.IsEnabled(kScissorTest);
-    GLint box[4];
-    GLfloat clear[4];
-    GLboolean mask[4];
-    g_gl11.GetIntegerv(kScissorBox, box);
-    g_gl11.GetFloatv(kColorClearValue, clear);
-    g_gl11.GetBooleanv(kColorWritemask, mask);
-
-    g_gl11.Enable(kScissorTest);
-    g_gl11.Scissor(kMargin, (rc.bottom - rc.top) - kMargin - kSize, kSize, kSize);
-    g_gl11.ColorMask(1, 1, 1, 1);
-    g_gl11.ClearColor(rgb[0], rgb[1], rgb[2], 1.0f);
-    g_gl11.Clear(kColorBufferBit);
-
-    g_gl11.ClearColor(clear[0], clear[1], clear[2], clear[3]);
-    g_gl11.ColorMask(mask[0], mask[1], mask[2], mask[3]);
-    g_gl11.Scissor(box[0], box[1], box[2], box[3]);
-    if (!scissor_on) g_gl11.Disable(kScissorTest);
+    if (!GetClientRect(WindowFromDC(dc), &rc)) return;
+    const hw2vr::gl::Api& a = hw2vr::gl::api();
+    hw2vr::gl::StateGuard guard;
+    hw2vr::gl::StateGuard::neutral();
+    a.BindFramebuffer(hw2vr::gl::DRAW_FRAMEBUFFER, 0);
+    a.Enable(hw2vr::gl::SCISSOR_TEST);
+    a.Scissor(kMargin, (rc.bottom - rc.top) - kMargin - kSize, kSize, kSize);
+    a.ClearColor(rgb[0], rgb[1], rgb[2], 1.0f);
+    a.Clear(hw2vr::gl::COLOR_BUFFER_BIT);
 }
 
 struct ProcHook {
@@ -202,6 +197,7 @@ ProcHook g_proc_hooks[] = {
     {"glUseProgram", reinterpret_cast<void**>(&real_glUseProgram), reinterpret_cast<void*>(&my_glUseProgram)},
     {"glLinkProgram", reinterpret_cast<void**>(&real_glLinkProgram), reinterpret_cast<void*>(&my_glLinkProgram)},
     {"glDeleteProgram", reinterpret_cast<void**>(&real_glDeleteProgram), reinterpret_cast<void*>(&my_glDeleteProgram)},
+    {"glBindFramebuffer", reinterpret_cast<void**>(&real_glBindFramebuffer), reinterpret_cast<void*>(&my_glBindFramebuffer)},
 };
 
 }  // namespace
@@ -221,26 +217,24 @@ extern "C" PROC WINAPI hook_wglGetProcAddress(LPCSTR name) {
 
 extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
     hw2vr::stereo::on_frame();
-    if (float rgb[3]; hw2vr::stereo::mode_indicator_color(rgb)) draw_mode_indicator(dc, rgb);
-    return real_wglSwapBuffers(dc);
+    hw2vr::vrframe::before_swap(dc);
+    if (float rgb[3]; hw2vr::stereo::mode_indicator_color(rgb) && hw2vr::gl::load()) draw_mode_indicator(dc, rgb);
+    const BOOL ok = real_wglSwapBuffers(dc);
+    hw2vr::vrframe::after_swap();
+    return ok;
 }
 
 namespace hw2vr::proxy {
 
 bool init_hooks() {
     HMODULE gl = real_opengl32();
-    auto get = [gl](auto& fn, const char* name) {
-        fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(GetProcAddress(gl, name));
-        return fn != nullptr;
-    };
-    const bool ok = get(real_wglGetProcAddress, "wglGetProcAddress") && get(real_wglSwapBuffers, "wglSwapBuffers") &&
-                    get(g_gl11.GetIntegerv, "glGetIntegerv") && get(g_gl11.GetFloatv, "glGetFloatv") &&
-                    get(g_gl11.GetBooleanv, "glGetBooleanv") && get(g_gl11.IsEnabled, "glIsEnabled") &&
-                    get(g_gl11.Enable, "glEnable") && get(g_gl11.Disable, "glDisable") &&
-                    get(g_gl11.Scissor, "glScissor") && get(g_gl11.ColorMask, "glColorMask") &&
-                    get(g_gl11.ClearColor, "glClearColor") && get(g_gl11.Clear, "glClear");
-    if (!ok) HW2VR_LOG("FATAL: a wgl/GL 1.1 export the hooks need is missing from the real opengl32.dll");
-    return ok;
+    real_wglGetProcAddress = reinterpret_cast<PFN_wglGetProcAddress>(GetProcAddress(gl, "wglGetProcAddress"));
+    real_wglSwapBuffers = reinterpret_cast<PFN_wglSwapBuffers>(GetProcAddress(gl, "wglSwapBuffers"));
+    if (!real_wglGetProcAddress || !real_wglSwapBuffers) {
+        HW2VR_LOG("FATAL: real wglGetProcAddress/wglSwapBuffers not found");
+        return false;
+    }
+    return true;
 }
 
 }  // namespace hw2vr::proxy

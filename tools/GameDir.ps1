@@ -3,6 +3,7 @@
 $script:Hw2vrProductName = 'HW2 Frame VR'   # ProductName in our DLL's version resource (src/common/version.h)
 $script:Hw2vrManifest    = 'hw2vr-installed.txt'
 $script:Hw2vrBackupName  = 'opengl32.dll.hw2vr-backup'
+$script:Hw2vrOpenvrBackupName = 'openvr_api.dll.hw2vr-backup'
 
 function Find-HwrmBinDir {
     $steam = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath

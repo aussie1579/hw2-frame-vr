@@ -8,6 +8,7 @@
 #include "proxy/gl_hooks.h"
 #include "proxy/real_gl.h"
 #include "stereo/view_override.h"
+#include "vr/vr_frame.h"
 
 namespace {
 
@@ -30,9 +31,16 @@ bool init(HMODULE self) {
     // instead of crashing on the first GL call.
     if (!hw2vr::proxy::load_real_opengl32() || !hw2vr::proxy::init_hooks()) return false;
 
-    hw2vr::stereo::configure(cfg.spike_yaw_degrees, cfg.spike_offset_x, cfg.spike_start_mode);
-    HW2VR_LOG("spike: Ctrl+Shift+F9 cycles camera override off/yaw/offset/yaw+offset (yaw %.1f deg, offset_x %.1f, "
-              "start mode %d)", cfg.spike_yaw_degrees, cfg.spike_offset_x, cfg.spike_start_mode);
+    hw2vr::stereo::configure_spike(cfg.spike_yaw_degrees, cfg.spike_offset_x, cfg.spike_start_mode);
+    hw2vr::vrframe::Settings vr;
+    vr.autostart = cfg.vr_autostart;
+    vr.world_scale = cfg.vr_world_scale;
+    vr.hud_distance = cfg.vr_hud_distance;
+    vr.hud_scale = cfg.vr_hud_scale;
+    vr.hud_premultiplied = cfg.vr_hud_premultiplied;
+    hw2vr::vrframe::configure(vr, dir);  // VR itself starts on the render thread (Ctrl+Shift+F8 or autostart)
+    HW2VR_LOG("hotkeys (Ctrl+Shift+): F8 VR on/off%s, F10 recentre, PgUp/PgDn world scale, F9 flat camera spike",
+              cfg.vr_autostart ? " (autostart on)" : "");
     return true;
 }
 
