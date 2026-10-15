@@ -18,9 +18,16 @@ struct Config {
     bool vr_hud_premultiplied = true;
     bool vr_sync_stereo = true;      // [vr] stereo = sync (both eyes every frame) | afr (alternating frames)
     bool vr_fit_window = true;       // [vr] fit_window: client area fully on its monitor while VR runs
-    bool vr_hud_movable = false;     // [vr] hud = aligned (spans the game's view) | panel (shelved curved panel)
+    int vr_hud_layout = 0;           // [vr] hud = console (0) | aligned (1) | panel (2, shelved)
+    bool vr_world_markers = true;    // [vr] world_markers: selection circles etc. at their ship's depth
     float vr_hud_distance = 3.0f;    // aligned HUD: metres
     float vr_hud_scale = 1.0f;       // aligned HUD: 1 = spans the game's field of view
+
+    // [console] (hud = console): until moved with its grab bar (then hw2vr_console.ini).
+    float console_distance = 0.85f;       // metres
+    float console_width_degrees = 80.0f;  // curved round the player
+    float console_height = -0.42f;        // metres above eye level (negative = below)
+    float console_backing = 0.6f;         // opacity of its dark surface
 
     // [panel] (hud = panel): the curved screen, until moved with its grab bar (then hw2vr_panel.ini).
     float panel_distance = 1.8f;           // metres
@@ -34,7 +41,10 @@ struct Config {
     bool camera_invert_y = false;
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;
-    int click_freeze_ms = 120;
+    int click_freeze_ms = 80;
+    float drag_degrees = 1.5f;     // a held click starts dragging once the laser moves this far
+    float trigger_press = 0.25f;   // trigger pull (0..1) that counts as a press
+    float trigger_release = 0.15f; // ... and as let go again
     float filter_min_cutoff = 1.0f, filter_beta = 0.007f;
     bool haptics = true;
     bool show_beam = true;

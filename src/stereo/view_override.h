@@ -36,6 +36,12 @@ void apply_view_override(const float in[16], float out[16], CameraUniform source
 // Returns false when the projection should be uploaded unchanged.
 bool apply_projection_override(const float proj[16], float out[16], bool view_space_input);
 
+// A 2D HUD draw (ortho projection over the game's screen) placed in 3D: on the plane `view_depth` game units in
+// front of the game camera, where the game camera sees it, then through the current eye's camera and projection.
+// The marker keeps its place and size as seen from the game camera; each eye sees it at that depth. False when
+// there is no eye (flat) or no game projection yet.
+bool place_at_depth(const float ortho[16], float view_depth, float out[16]);
+
 // The game's own main-camera projection (infinite far plane), remembered for sizing the HUD overlay.
 // draw_framebuffer: where the main 3D scene is being drawn (its depth buffer is what the laser is tested against).
 void note_game_projection(const float proj[16], unsigned draw_framebuffer);

@@ -2,7 +2,7 @@
   "action_manifest_version": 0,
   "controller_type": "frame_controller",
   "name": "HW2 Frame VR default (Steam Frame)",
-  "description": "Right hand = mouse: laser points, trigger = left click, bumper = right click, stick = zoom, A/B/X/Y/Menu = hotkeys. Left hand = camera: stick orbits, D-pad pans, trigger = Shift, bumper = Ctrl, View and stick click = hotkeys.",
+  "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = right click, stick = zoom, A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad = build / research / launch / stop, View = tactical overlay.",
   "bindings": {
     "/actions/main": {
       "poses": [
@@ -22,8 +22,8 @@
           "path": "/user/hand/right/input/trigger",
           "mode": "trigger",
           "inputs": {
-            "click": {
-              "output": "/actions/main/in/leftclick"
+            "pull": {
+              "output": "/actions/main/in/click"
             }
           }
         },
@@ -154,8 +154,8 @@
           "path": "/user/hand/left/input/trigger",
           "mode": "trigger",
           "inputs": {
-            "click": {
-              "output": "/actions/main/in/button_left_trigger"
+            "pull": {
+              "output": "/actions/main/in/left_trigger"
             }
           }
         },

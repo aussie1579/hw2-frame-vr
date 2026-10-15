@@ -4,11 +4,14 @@
 
 #include "input/panel_geometry.h"
 
-// The VR panel that shows the game's 2D UI. Two layouts:
-//   - aligned (default): flat, facing the game camera's direction and exactly spanning the game's field of view, at
-//     the head's position, so screen-placed markers sit over their ships and the UI is as sharp as it gets;
-//   - movable (shelved after headset test 6, "not readable"): one curved screen fixed relative to the recentre pose,
-//     moved/resized/curved with the grab bar under it (input/controls.cpp), placement saved to hw2vr_panel.ini.
+// The VR panel that shows the game's screen-space UI (taskbar, menus, managers). Layouts:
+//   - console (default, after headset test 7): a curved console below eye level, tilted towards the player like a
+//     cockpit dashboard, on a dark backing so it reads as a solid surface; moved/resized/curved with the grab bar
+//     above it, placement saved to hw2vr_console.ini. The world-space markers are in the world (hud_layer.h).
+//   - aligned: flat, facing the game camera's direction and exactly spanning the game's field of view, at the
+//     head's position;
+//   - panel (shelved after headset test 6, "not readable"): a curved screen in front, grab bar under it, placement
+//     saved to hw2vr_panel.ini.
 namespace hw2vr::panel {
 
 struct Placement {
@@ -19,14 +22,17 @@ struct Placement {
     float curvature = 0.18f;  // SteamVR overlay curvature: width / (2 pi radius); 0 = flat
 };
 
+enum class Layout { Console, Aligned, Panel };
+
 struct Settings {
-    bool movable = false;            // false = aligned layout
+    Layout layout = Layout::Console;
+    float backing = 0.6f;            // console: opacity of the dark surface behind the UI
     float aligned_distance = 3.0f;   // metres
     float aligned_scale = 1.0f;      // 1 = spans the game's horizontal field of view
-    Placement defaults;              // movable: used until the player moves the panel
+    Placement defaults;              // console/panel: used until the player moves it
     float pixels_per_degree = 20.0f; // panel texture resolution (headset pixels per degree); 0 = full size
     bool premultiplied = true;
-    std::wstring state_path;         // hw2vr_panel.ini
+    std::wstring state_path;         // hw2vr_console.ini / hw2vr_panel.ini
 };
 
 // Default placement for a curved panel `degrees` wide at `distance`, centred on the viewer.
@@ -34,7 +40,9 @@ Placement centred(float distance, float degrees, float height);
 
 void configure(const Settings& settings);
 bool start();  // VR started: create the overlay
-bool movable();
+bool movable();  // console or panel: placed by the player, grab bar shown
+bool solid();    // console: the whole surface is UI (the laser never points through it)
+bool bar_above();  // the grab bar goes above it (console, below eye level) rather than under it
 void stop();   // VR stopping: forget the overlay (vr::stop destroys it)
 
 void recentre(const float anchor_pose[16]);  // seated pose (yaw + position) the panel is placed relative to

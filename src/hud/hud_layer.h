@@ -32,9 +32,9 @@ int overlay_width();         // its size (the game window's), 0 before the first
 int overlay_height();
 void release();              // delete GL objects (VR off)
 
-// The overlay filtered down to width x height for the VR panel (call after the frame's draws, before the swap).
-// Returns the panel texture, or 0 if there is no overlay yet.
-unsigned build_panel_texture(int width, int height);
+// The overlay filtered down to width x height for the VR panel (call after the frame's draws, before the swap),
+// over a dark backing of opacity `backing` (0 = see-through). Returns the panel texture, 0 if there's no overlay.
+unsigned build_panel_texture(int width, int height, float backing = 0.0f);
 
 // Where the 2D UI actually has something: a coarse coverage mask (1/8 of the window per side) read back without
 // stalling, one frame late, from the overlay's mipmaps. build_panel_texture updates it. The laser treats the
@@ -54,10 +54,16 @@ const Cursor& last_cursor();     // the last completed frame (after the swap)
 void set_cursor_override(int x, int y);  // tests: pretend the cursor is here (x < 0 = off)
 
 // Every game draw, before it runs. is_2d: the current program's projection is ortho (or untracked).
-// Redirect: onto the overlay. RedirectCursor: into the cursor texture. Skip: during the second-eye replay, the 2D
-// draws and cursor are already captured.
-enum class DrawAction { Draw, Redirect, RedirectCursor, Skip };
+// Redirect: onto the overlay (screen-space UI). RedirectCursor: into the cursor texture. PlaceAtDepth: a world-space
+// marker, drawn into the game's HUD layer at its ship's depth (world_marker_depth + stereo::place_at_depth).
+// Skip: during the second-eye replay, the screen UI and cursor are already captured.
+enum class DrawAction { Draw, Redirect, RedirectCursor, PlaceAtDepth, Skip };
 DrawAction draw_action(unsigned draw_fbo, unsigned program, bool is_2d);
+// For a PlaceAtDepth draw: its view depth in game units. bounds = its screen rectangle {x0, y0, x1, y1} in [0,1]
+// (y up), or nullptr if unknown. During the replay it returns what the first eye used, in order.
+float world_marker_depth(const float* bounds);
+void set_world_markers(bool on);  // false: world markers stay with the screen UI (as before 0.8.0)
+bool replaying();
 void begin_redirect(unsigned draw_fbo);  // bind the overlay target, keep the game's colour blend, coverage alpha
 void end_redirect(unsigned draw_fbo);    // restore the game's blend and framebuffer
 bool begin_cursor_redirect();            // bind the cursor target, viewport shifted onto the hotspot; false = draw as is
@@ -74,7 +80,10 @@ struct TestState {
     unsigned redirected_draws;
     unsigned cursor_texture;
     unsigned cursor_draws;
+    unsigned world_draws;     // world markers placed (first eye)
+    unsigned world_anchored;  // ... of which had a surface behind them
 };
 TestState test_state();
+float last_world_marker_depth();
 
 }  // namespace hw2vr::hud

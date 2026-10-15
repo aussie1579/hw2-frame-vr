@@ -45,9 +45,14 @@ Config load_config(const std::wstring& ini_path) {
         GetPrivateProfileIntW(L"vr", L"hud_premultiplied", c.vr_hud_premultiplied ? 1 : 0, ini_path.c_str()) != 0;
     {
         wchar_t hud[16];
-        GetPrivateProfileStringW(L"vr", L"hud", L"aligned", hud, static_cast<DWORD>(std::size(hud)), ini_path.c_str());
-        c.vr_hud_movable = _wcsicmp(hud, L"panel") == 0;
+        GetPrivateProfileStringW(L"vr", L"hud", L"console", hud, static_cast<DWORD>(std::size(hud)), ini_path.c_str());
+        c.vr_hud_layout = _wcsicmp(hud, L"aligned") == 0 ? 1 : _wcsicmp(hud, L"panel") == 0 ? 2 : 0;
     }
+    c.vr_world_markers = GetPrivateProfileIntW(L"vr", L"world_markers", 1, ini_path.c_str()) != 0;
+    c.console_distance = read_float(ini_path, L"console", L"distance", c.console_distance);
+    c.console_width_degrees = read_float(ini_path, L"console", L"width_degrees", c.console_width_degrees);
+    c.console_height = read_float(ini_path, L"console", L"height", c.console_height);
+    c.console_backing = read_float(ini_path, L"console", L"backing", c.console_backing);
     c.vr_fit_window = GetPrivateProfileIntW(L"vr", L"fit_window", c.vr_fit_window ? 1 : 0, ini_path.c_str()) != 0;
     c.vr_hud_distance = read_float(ini_path, L"vr", L"hud_distance", c.vr_hud_distance);
     c.vr_hud_scale = read_float(ini_path, L"vr", L"hud_scale", c.vr_hud_scale);
@@ -66,6 +71,9 @@ Config load_config(const std::wstring& ini_path) {
     c.zoom_notches_per_second = read_float(ini_path, L"controls", L"zoom_notches_per_second", c.zoom_notches_per_second);
     c.zoom_invert = flag(L"zoom_invert", c.zoom_invert);
     c.click_freeze_ms = static_cast<int>(GetPrivateProfileIntW(L"controls", L"click_freeze_ms", c.click_freeze_ms, ini_path.c_str()));
+    c.drag_degrees = read_float(ini_path, L"controls", L"drag_degrees", c.drag_degrees);
+    c.trigger_press = read_float(ini_path, L"controls", L"trigger_press", c.trigger_press);
+    c.trigger_release = read_float(ini_path, L"controls", L"trigger_release", c.trigger_release);
     c.filter_min_cutoff = read_float(ini_path, L"controls", L"filter_min_cutoff", c.filter_min_cutoff);
     c.filter_beta = read_float(ini_path, L"controls", L"filter_beta", c.filter_beta);
     c.haptics = flag(L"haptics", c.haptics);

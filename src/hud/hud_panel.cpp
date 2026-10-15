@@ -82,29 +82,31 @@ Placement centred(float distance, float degrees, float height) {
 
 void configure(const Settings& settings) {
     g_settings = settings;
-    if (g_settings.movable) load();
+    if (movable()) load();
 }
 
 bool start() {
     g_placed = false;
     g_tex_width = 0;
     g_logged_size = false;
-    if (g_settings.movable) load();  // pick up placement edits made while VR was off
+    if (movable()) load();  // pick up placement edits made while VR was off
     if (!g_overlay.create("hw2vr.panel", "Homeworld 2 UI", 1, g_settings.premultiplied)) return false;
-    if (g_settings.movable)
-        HW2VR_LOG("panel: movable, %.2f m ahead, %.2f m side, %.2f m up, %.2f m wide (%.0f degrees), curvature %.3f",
-                  g_placement.distance, g_placement.side, g_placement.height, g_placement.width,
-                  g_placement.width / g_placement.distance * 180.0f / kPi, g_placement.curvature);
+    if (movable())
+        HW2VR_LOG("panel: %s, %.2f m ahead, %.2f m side, %.2f m up, %.2f m wide (%.0f degrees), curvature %.3f",
+                  solid() ? "console" : "movable panel", g_placement.distance, g_placement.side, g_placement.height,
+                  g_placement.width, g_placement.width / g_placement.distance * 180.0f / kPi, g_placement.curvature);
     else
         HW2VR_LOG("panel: aligned with the game's view, %.1f m away, scale %.2f", g_settings.aligned_distance,
                   g_settings.aligned_scale);
     return true;
 }
 
-bool movable() { return g_settings.movable; }
+bool movable() { return g_settings.layout != Layout::Aligned; }
+bool solid() { return g_settings.layout == Layout::Console; }
+bool bar_above() { return g_placed && g_geometry.centre.y < position(g_anchor).y - 0.05f; }
 
 void follow(const float camera_pose[16], const float hmd_pose[16], float tan_half_fov_x) {
-    if (g_settings.movable) return;
+    if (movable()) return;
     // The panel is far closer than the (world-scaled) ships, so it sits at the head's position: leaning would
     // otherwise slide markers off their ships. Its orientation stays the game camera's.
     std::memcpy(g_anchor, camera_pose, sizeof g_anchor);
@@ -146,7 +148,7 @@ void apply() {
 }
 
 void save() {
-    if (!g_settings.movable) return;
+    if (!movable()) return;
     write_float(L"distance", g_placement.distance);
     write_float(L"side", g_placement.side);
     write_float(L"height", g_placement.height);
@@ -191,7 +193,7 @@ void update_texture(const float hmd_pose[16], float aspect) {
                   g_settings.pixels_per_degree);
         g_logged_size = true;
     }
-    const unsigned tex = hud::build_panel_texture(width, height);
+    const unsigned tex = hud::build_panel_texture(width, height, solid() ? g_settings.backing : 0.0f);
     if (!tex) return;
     g_overlay.set_texture(tex);
     g_overlay.show();

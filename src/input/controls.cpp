@@ -62,6 +62,10 @@ OneEuroFilter g_fx, g_fy;
 Aim g_prev_aim = Aim::None;
 bool g_mouse_down[2] = {};       // buttons we hold down in the game
 long long g_freeze_until = 0;
+// A press holds the cursor where it went down until the laser moves past drag_degrees, so a click never turns
+// into a tiny drag (box select / camera nudge); further than that it drags.
+bool g_sticky = false;
+Vec3 g_press_dir;
 int g_cursor_x = INT_MIN, g_cursor_y = INT_MIN;  // last client position we put the cursor at
 
 bool g_orbiting = false;
@@ -81,17 +85,20 @@ float axis(float v, float deadzone) {
     return std::fabs(v) < deadzone ? 0.0f : (v - std::copysign(deadzone, v)) / (1.0f - deadzone);
 }
 
-// The bar's rectangle under the panel, facing the same way.
+// The bar's rectangle next to the panel, facing the same way: above a console that sits below eye level (between it
+// and the battlefield), under a panel at eye height.
 input::PanelGeometry bar_layout(const input::PanelGeometry& p) {
     input::PanelGeometry b = p;
     b.curvature = 0.0f;
     b.width = std::clamp(p.width * 0.12f, 0.18f, 0.5f);
     b.height = b.width * 32.0f / 256.0f;
-    b.centre = p.centre - p.up * (p.height / 2.0f + kBarGap + b.height / 2.0f);
+    const float side = panel::bar_above() ? 1.0f : -1.0f;
+    b.centre = p.centre + p.up * (side * (p.height / 2.0f + kBarGap + b.height / 2.0f));
     return b;
 }
 
 void release_mouse() {
+    g_sticky = false;
     for (int b = 0; b < 2; ++b)
         if (g_mouse_down[b]) inputsim::mouse_button(b, false), g_mouse_down[b] = false;
     if (g_orbiting) inputsim::mouse_button(1, false), g_orbiting = false;
@@ -143,7 +150,8 @@ void place_hint(const input::PanelGeometry& p) {
     const input::PanelGeometry bar = bar_layout(p);
     const float width = std::clamp(0.45f * panel::placement().distance, 0.4f, 1.6f);
     const float height = width * g_hint_aspect;
-    const Vec3 centre = bar.centre - p.up * (bar.height / 2.0f + 0.03f + height / 2.0f) + p.normal * 0.05f;
+    const float side = panel::bar_above() ? 1.0f : -1.0f;  // help on the far side of the bar from the panel
+    const Vec3 centre = bar.centre + p.up * (side * (bar.height / 2.0f + 0.03f + height / 2.0f)) + p.normal * 0.05f;
     float pose[16];
     pose_from_axes(p.right, p.up, p.normal, centre, pose);
     g_hint.set_width(width);
@@ -180,11 +188,11 @@ void start_drag(const Vec3& origin, const Vec3& dir, float distance) {
     HW2VR_LOG("controls: moving the panel (grab bar)");
 }
 
-// Puts the game's cursor at a client pixel (filtered), unless frozen round a click.
+// Puts the game's cursor at a client pixel (filtered), unless held by a press or frozen after a release.
 void aim_cursor(const Frame& f, float px, float py, double dt, bool reset_filter) {
     if (reset_filter) g_fx.reset(), g_fy.reset();
     const double fx = g_fx.filter(px, dt), fy = g_fy.filter(py, dt);
-    if (now_ms() < g_freeze_until) return;
+    if (g_sticky || now_ms() < g_freeze_until) return;
     const int x = std::clamp(static_cast<int>(std::floor(fx)), 0, f.client_w - 1);
     const int y = std::clamp(static_cast<int>(std::floor(fy)), 0, f.client_h - 1);
     if (x == g_cursor_x && y == g_cursor_y) return;
@@ -193,17 +201,20 @@ void aim_cursor(const Frame& f, float px, float py, double dt, bool reset_filter
     inputsim::set_cursor_client(f.window, x, y);
 }
 
-void click(const vrinput::ButtonState& b, int button, bool can_press) {
+void click(const vrinput::ButtonState& b, int button, bool can_press, const Vec3& dir) {
     if (b.pressed && can_press && !g_mouse_down[button]) {
         inputsim::mouse_button(button, true);
         g_mouse_down[button] = true;
-        g_freeze_until = now_ms() + g_s.click_freeze_ms;
+        g_sticky = true;
+        g_press_dir = dir;
         if (g_s.haptics) vrinput::pulse(0.01f, 0.4f);
     }
     if (!b.down && g_mouse_down[button]) {
         inputsim::mouse_button(button, false);
         g_mouse_down[button] = false;
-        g_freeze_until = now_ms() + g_s.click_freeze_ms / 2;
+        if (!g_mouse_down[0] && !g_mouse_down[1]) g_sticky = false;
+        g_freeze_until = now_ms() + g_s.click_freeze_ms;
+        if (g_s.haptics) vrinput::pulse(0.005f, 0.2f);
     }
 }
 
@@ -412,7 +423,7 @@ Requests update(const Frame& f) {
         } else if (showing && g.intersect(origin, dir, hit_uv, &hit_distance)) {
             // The panel is mostly see-through: it only counts where the game's UI has something. A held button
             // keeps the mode it was pressed in (a band-select drag in the world can cross UI).
-            const bool ui = hud::ui_at(hit_uv[0], hit_uv[1]) != 0;
+            const bool ui = panel::solid() || hud::ui_at(hit_uv[0], hit_uv[1]) != 0;
             aim = held && g_prev_aim == Aim::World ? Aim::World : ui || held ? Aim::Panel : Aim::World;
         } else {
             aim = Aim::World;
@@ -477,8 +488,11 @@ Requests update(const Frame& f) {
 
     const bool can_click = foreground && !busy && !g_orbiting && (aim == Aim::Panel || aim == Aim::World) &&
                            inputsim::cursor_over(f.window);
-    click(st.left_click, 0, can_click && aim != Aim::Bar);
-    click(st.right_click, 1, can_click);
+    click(st.left_click, 0, can_click && aim != Aim::Bar, dir);
+    click(st.right_click, 1, can_click, dir);
+    // A held button starts dragging once the laser has moved far enough from where it went down.
+    if (g_sticky && st.pointer_valid && dot(dir, g_press_dir) < std::cos(g_s.drag_degrees * 3.14159265f / 180.0f))
+        g_sticky = false;
 
     const bool sticks = foreground && !busy && !g_mouse_down[0] && !g_mouse_down[1];
     orbit(f, st, sticks);

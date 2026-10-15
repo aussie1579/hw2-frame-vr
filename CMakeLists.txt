@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(hw2vr VERSION 0.7.0 LANGUAGES CXX RC)
+project(hw2vr VERSION 0.8.0 LANGUAGES CXX RC)
 
 # HomeworldRM.exe is 32-bit (docs/FINDINGS.md), so the proxy must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -20,12 +20,14 @@ add_library(hw2vr_proxy SHARED
     src/proxy/gl_hooks.cpp
     src/proxy/gl_api.cpp
     src/proxy/gl_record_hooks.cpp
+    src/proxy/engine_hooks.cpp
     src/stereo/view_override.cpp
     src/stereo/depth_probe.cpp
     src/stereo/frame_replay.cpp
     src/stereo/gl_snapshot.cpp
     src/hud/hud_layer.cpp
     src/hud/hud_panel.cpp
+    src/hud/marker_geometry.cpp
     src/input/controls.cpp
     src/input/input_sim.cpp
     src/input/key_names.cpp

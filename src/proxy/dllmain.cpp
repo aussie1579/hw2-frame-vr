@@ -10,6 +10,7 @@
 #include "hud/hud_panel.h"
 #include "input/controls.h"
 #include "input/key_names.h"
+#include "vr/vr_input.h"
 #include "proxy/gl_hooks.h"
 #include "proxy/real_gl.h"
 #include "stereo/view_override.h"
@@ -26,13 +27,20 @@ std::wstring module_dir(HMODULE module) {
 
 void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& dir) {
     hw2vr::panel::Settings panel;
-    panel.movable = cfg.vr_hud_movable;
+    panel.layout = static_cast<hw2vr::panel::Layout>(cfg.vr_hud_layout);
     panel.aligned_distance = cfg.vr_hud_distance;
     panel.aligned_scale = cfg.vr_hud_scale;
-    panel.defaults = hw2vr::panel::centred(cfg.panel_distance, cfg.panel_width_degrees, cfg.panel_height);
+    panel.backing = cfg.console_backing;
+    if (panel.layout == hw2vr::panel::Layout::Console) {
+        panel.defaults = hw2vr::panel::centred(cfg.console_distance, cfg.console_width_degrees, cfg.console_height);
+        panel.state_path = dir + L"hw2vr_console.ini";
+    } else {
+        panel.defaults = hw2vr::panel::centred(cfg.panel_distance, cfg.panel_width_degrees, cfg.panel_height);
+        panel.state_path = dir + L"hw2vr_panel.ini";
+    }
     panel.pixels_per_degree = cfg.panel_pixels_per_degree;
     panel.premultiplied = cfg.vr_hud_premultiplied;
-    panel.state_path = dir + L"hw2vr_panel.ini";
+    hw2vr::hud::set_world_markers(cfg.vr_world_markers);
     hw2vr::panel::configure(panel);
 
     hw2vr::controls::Settings c;
@@ -42,6 +50,8 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     c.zoom_notches_per_second = cfg.zoom_notches_per_second;
     c.zoom_invert = cfg.zoom_invert;
     c.click_freeze_ms = cfg.click_freeze_ms;
+    c.drag_degrees = cfg.drag_degrees;
+    hw2vr::vrinput::set_trigger_thresholds(cfg.trigger_press, cfg.trigger_release);
     c.filter_min_cutoff = cfg.filter_min_cutoff;
     c.filter_beta = cfg.filter_beta;
     c.haptics = cfg.haptics;

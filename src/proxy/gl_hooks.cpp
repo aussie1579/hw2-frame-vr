@@ -23,6 +23,8 @@
 #include "common/log.h"
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
+#include "hud/marker_geometry.h"
+#include "proxy/engine_hooks.h"
 #include "proxy/gl_api.h"
 #include "proxy/gl_record_hooks.h"
 #include "proxy/real_gl.h"
@@ -70,6 +72,8 @@ struct ProgramInfo {
     GLint loc_mv = -1;    // inMatMV
     GLint loc_proj = -1;  // inMatP
     bool proj_is_perspective = false;  // from this program's last inMatP upload
+    GLfloat raw_proj[16] = {};         // the game's last inMatP for this program (world markers are re-projected)
+    bool has_raw_proj = false;
 
     // Group B: whether inMatMV carries the camera depends on the projection *at draw time*. Some programs switch
     // between 2D and 3D within a frame and upload inMatMV before inMatP (prog 68: HUD lines vs. Sensors Manager
@@ -206,6 +210,8 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
         const bool override_camera = hw2vr::stereo::active();
         GLfloat replaced[16];
         if (loc == info->loc_proj) {
+            std::memcpy(info->raw_proj, value, sizeof info->raw_proj);
+            info->has_raw_proj = true;
             info->proj_is_perspective = hw2vr::mat4::is_perspective(value);
             if (!info->proj_is_perspective) {
                 hw2vr::hud::note_ortho_projection(g_draw_fbo);
@@ -231,10 +237,41 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
     real_glUniformMatrix4fv(loc, count, transpose, value);
 }
 
-// Every game draw: 2D draws into the HUD framebuffer, and UI drawn to the screen after the composite (the mouse
-// cursor), go onto the VR overlay instead (hud_layer.h). Untracked programs count as 2D.
+// What a game draw call draws, for working out where a world marker sits on the screen.
+struct DrawCall {
+    bool elements;
+    std::ptrdiff_t first;  // DrawArrays: first vertex; DrawElements: byte offset into the element buffer
+    GLsizei count;
+    GLenum index_type;
+};
+
+// A world-space marker (2D draw before the game's PHASE_UIIn): drawn into the HUD layer on the plane at its ship's
+// depth, through the current eye, then the game's own projection is put back.
 template <class Draw>
-void game_draw(Draw draw) {
+void draw_world_marker(const DrawCall& call, Draw draw) {
+    static constexpr GLfloat kIdentity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    ProgramInfo* info = g_current;
+    float bounds[4];
+    bool have_bounds = false;
+    if (info && info->has_raw_proj && !hw2vr::hud::replaying())
+        have_bounds = hw2vr::markers::screen_bounds(call.elements, call.first, call.count, call.index_type,
+                                                    info->has_raw_mv ? info->raw_mv : kIdentity, info->raw_proj, bounds);
+    const float depth = hw2vr::hud::world_marker_depth(have_bounds ? bounds : nullptr);
+    GLfloat placed[16];
+    if (info && info->loc_proj >= 0 && info->has_raw_proj && hw2vr::stereo::place_at_depth(info->raw_proj, depth, placed)) {
+        real_glUniformMatrix4fv(info->loc_proj, 1, 0, placed);
+        draw();
+        real_glUniformMatrix4fv(info->loc_proj, 1, 0, info->raw_proj);
+    } else {
+        draw();
+    }
+}
+
+// Every game draw: 2D draws into the HUD framebuffer, and UI drawn to the screen after the composite (the mouse
+// cursor), go onto the VR overlay instead (hud_layer.h); world-space markers go into the world. Untracked programs
+// count as 2D.
+template <class Draw>
+void game_draw(const DrawCall& call, Draw draw) {
     if (g_current && g_current->has_raw_mv) sync_model_view(*g_current);
     const bool is_2d = !g_current || !g_current->proj_is_perspective;
     switch (hw2vr::hud::draw_action(g_draw_fbo, g_current_program, is_2d)) {
@@ -254,16 +291,20 @@ void game_draw(Draw draw) {
             draw();
             hw2vr::hud::end_cursor_redirect(g_draw_fbo);
             break;
+        case hw2vr::hud::DrawAction::PlaceAtDepth:
+            draw_world_marker(call, draw);
+            break;
         case hw2vr::hud::DrawAction::Skip:
             break;
     }
 }
 
 void APIENTRY draw_arrays(GLenum mode, GLint first, GLsizei count) {
-    game_draw([&] { real_glDrawArrays(mode, first, count); });
+    game_draw({false, first, count, 0}, [&] { real_glDrawArrays(mode, first, count); });
 }
 void APIENTRY draw_elements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
-    game_draw([&] { real_glDrawElements(mode, count, type, indices); });
+    game_draw({true, reinterpret_cast<std::ptrdiff_t>(indices), count, type},
+              [&] { real_glDrawElements(mode, count, type, indices); });
 }
 PFN_glDrawArrays p_draw_arrays = &draw_arrays;
 PFN_glDrawElements p_draw_elements = &draw_elements;
@@ -331,9 +372,39 @@ extern "C" __declspec(dllexport) hw2vr::replay::Stats hw2vr_replay_stats() { ret
 extern "C" __declspec(dllexport) void hw2vr_test_set_cursor(int x, int y) { hw2vr::hud::set_cursor_override(x, y); }
 // The panel filter on its own, for tests: the current overlay filtered to width x height (GL texture, 0 = none).
 extern "C" __declspec(dllexport) unsigned hw2vr_test_build_panel(int width, int height) {
-    return hw2vr::hud::build_panel_texture(width, height);
+    return hw2vr::hud::build_panel_texture(width, height, 0.0f);
 }
 extern "C" __declspec(dllexport) int hw2vr_test_ui_at(float u, float v) { return hw2vr::hud::ui_at(u, v); }
+// World markers: pretend the UI phase hook is installed and whether the screen-space UI has started.
+extern "C" __declspec(dllexport) void hw2vr_test_set_ui_phase(int installed, int screen) {
+    hw2vr::engine::set_test_installed(installed != 0);
+    hw2vr::engine::set_screen_ui_phase(screen != 0);
+}
+extern "C" __declspec(dllexport) unsigned hw2vr_test_find_ui_in(const wchar_t* exe_path) {
+    return hw2vr::engine::test_find_ui_in(exe_path);
+}
+extern "C" __declspec(dllexport) float hw2vr_test_last_marker_depth() { return hw2vr::hud::last_world_marker_depth(); }
+// The marker depth grid on its own: the scene framebuffer seen with the game's camera (identity eye), then the
+// view depth behind a screen rectangle. Returns -1 = empty space, -2 = no grid within 1 s, -3 = no scene seen.
+extern "C" __declspec(dllexport) float hw2vr_test_anchor_depth(float x0, float y0, float x1, float y1, int width,
+                                                               int height) {
+    const float* proj = hw2vr::stereo::game_projection();
+    if (!proj || !hw2vr::gl::load()) return -3.0f;
+    float eye[16];
+    hw2vr::mat4::identity(eye);
+    hw2vr::depth::set_camera(eye, proj);
+    const unsigned before = hw2vr::depth::test_state().grids;
+    hw2vr::depth::run(width, height);
+    hw2vr::gl::api().Flush();
+    for (int i = 0; i < 1000 && hw2vr::depth::test_state().grids == before; ++i) {
+        hw2vr::depth::poll_grid();
+        if (hw2vr::depth::test_state().grids == before) Sleep(1);
+    }
+    if (hw2vr::depth::test_state().grids == before) return -2.0f;
+    const float bounds[4] = {x0, y0, x1, y1};
+    float z = 0.0f;
+    return hw2vr::depth::anchor_view_depth(bounds, &z) ? z : -1.0f;
+}
 // The laser depth probe on its own: the scene framebuffer seen with the game's camera (identity eye), one ray in
 // game view space. Returns the distance along the ray, -1 = miss, -2 = no result within 1 s, -3 = no scene seen.
 extern "C" __declspec(dllexport) float hw2vr_test_depth_probe(const float origin[3], const float dir[3], int width,
@@ -380,6 +451,8 @@ void debug_replay_test() {
 extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
     hw2vr::replay::end_recording();  // the frame's GL stream is complete
     hw2vr::gl::load();               // first call only; needs the game's context, which is current here
+    static bool engine_tried = false;
+    if (!engine_tried) engine_tried = true, hw2vr::engine::install();  // the game's code is running (and unpacked) now
     if (RECT rc; GetClientRect(WindowFromDC(dc), &rc)) hw2vr::hud::set_target_size(rc.right, rc.bottom);
     hw2vr::hud::set_window(WindowFromDC(dc));
     hw2vr::hotkeys::log_seen_keys();
@@ -389,6 +462,7 @@ extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
     if (debug_replay) debug_replay_test();
     if (float rgb[3]; hw2vr::stereo::mode_indicator_color(rgb) && hw2vr::gl::load()) draw_mode_indicator(dc, rgb);
     const BOOL ok = real_wglSwapBuffers(dc);
+    hw2vr::engine::frame_end();  // the next frame starts with its world-space HUD
     hw2vr::vrframe::after_swap();
     hw2vr::replay::begin_frame(hw2vr::vrframe::wants_recording() || debug_replay);
     return ok;

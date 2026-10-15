@@ -51,7 +51,7 @@ long long g_window_start = 0;
 unsigned g_window_frames = 0, g_window_replays = 0;
 double g_window_replay_ms = 0.0;
 const char* g_last_fallback = "";
-unsigned g_last_probes = 0, g_last_results = 0, g_last_hits = 0;
+unsigned g_last_probes = 0, g_last_hits = 0, g_last_grids = 0, g_last_markers = 0, g_last_anchored = 0;
 
 void release_targets() {
     const gl::Api& a = gl::api();
@@ -229,10 +229,13 @@ void telemetry(bool replayed, double replay_ms) {
     if (seconds < 5.0) return;
     const replay::Stats s = replay::stats();
     const depth::TestState d = depth::test_state();
-    if (d.probes != g_last_probes)
-        HW2VR_LOG("vr: laser depth: %u probes, %u results, %u touching something (last 5 s)", d.probes - g_last_probes,
-                  d.results - g_last_results, d.hits - g_last_hits);
-    g_last_probes = d.probes, g_last_results = d.results, g_last_hits = d.hits;
+    const hud::TestState h = hud::test_state();
+    if (d.probes != g_last_probes || h.world_draws != g_last_markers)
+        HW2VR_LOG("vr: laser depth: %u probes, %u touching something | world markers: %u drawn, %u on a ship, "
+                  "%u depth grids (last 5 s)", d.probes - g_last_probes, d.hits - g_last_hits,
+                  h.world_draws - g_last_markers, h.world_anchored - g_last_anchored, d.grids - g_last_grids);
+    g_last_probes = d.probes, g_last_hits = d.hits, g_last_grids = d.grids;
+    g_last_markers = h.world_draws, g_last_anchored = h.world_anchored;
     if (g_settings.sync_stereo)
         HW2VR_LOG("vr: %.1f fps | synchronized stereo: %u/%u frames replayed, %.2f ms CPU per replay, %u GL calls and "
                   "%u KB per frame%s%s",
@@ -345,6 +348,7 @@ void after_swap() {
         set_eye_camera(g_eye);
         std::memcpy(g_pose_used[g_eye], hmd, sizeof hmd);
     }
+    depth::poll_grid();  // where the scene is behind each part of the screen, for this frame's world markers
     // The laser is tested against the depth of the eye the game renders next.
     const int rendered = g_settings.sync_stereo ? 0 : g_eye;
     if (const float* game_proj = stereo::game_projection()) {

@@ -20,6 +20,9 @@ if (-not $NoBuild) {
 }
 
 $failed = 0
+# The UI phase hook's signature is checked against the installed game (mapped as an image, never run).
+. (Join-Path $PSScriptRoot 'GameDir.ps1')
+try { $env:HW2VR_GAME_EXE = Join-Path (Find-HwrmBinDir) 'HomeworldRM.exe' } catch { Remove-Item Env:HW2VR_GAME_EXE -ErrorAction SilentlyContinue }
 Write-Host "`n=== math test (per-eye camera maths) ===" -ForegroundColor Cyan
 & (Join-Path $out 'hw2vr_math_test.exe')
 if ($LASTEXITCODE) { $failed++ }

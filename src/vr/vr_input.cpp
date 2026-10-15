@@ -17,6 +17,7 @@ bool g_ready = false;
 ::vr::VRActionHandle_t g_buttons[input::kButtonCount] = {};
 State g_state;
 bool g_logged_inactive = false;
+float g_press = 0.25f, g_release = 0.15f;  // trigger pull thresholds (hysteresis)
 
 std::string utf8(const std::wstring& w) {
     const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -39,6 +40,18 @@ ButtonState read_button(::vr::VRActionHandle_t a) {
     const bool changed = d.bActive && d.bChanged;
     b.pressed = changed && b.down;
     b.released = changed && !b.down;
+    return b;
+}
+
+// A trigger's pull as a button: down from a light pull, up again only once nearly let go.
+ButtonState read_pull(::vr::VRActionHandle_t a, const ButtonState& before, float* value) {
+    ::vr::InputAnalogActionData_t d{};
+    vr::input_api()->GetAnalogActionData(a, &d, sizeof d, ::vr::k_ulInvalidInputValueHandle);
+    *value = d.bActive ? d.x : 0.0f;
+    ButtonState b;
+    b.down = before.down ? *value > g_release : *value >= g_press;
+    b.pressed = b.down && !before.down;
+    b.released = !b.down && before.down;
     return b;
 }
 
@@ -77,13 +90,15 @@ bool init(const std::wstring& manifest_path) {
     err = in->GetActionSetHandle("/actions/main", &g_set);
     bool ok = err == ::vr::VRInputError_None;
     ok &= action("/actions/main/in/pointer", &g_pointer);
-    ok &= action("/actions/main/in/leftclick", &g_left_click);
+    ok &= action("/actions/main/in/click", &g_left_click);
     ok &= action("/actions/main/in/rightclick", &g_right_click);
     ok &= action("/actions/main/in/camera", &g_camera);
     ok &= action("/actions/main/in/zoom", &g_zoom);
     ok &= action("/actions/main/out/haptic", &g_haptic);
     for (int i = 0; i < input::kButtonCount; ++i)
-        ok &= action((std::string("/actions/main/in/button_") + input::kButtons[i].name).c_str(), &g_buttons[i]);
+        ok &= action(i == input::kLeftTrigger ? "/actions/main/in/left_trigger"  // analog, like the click
+                                              : (std::string("/actions/main/in/button_") + input::kButtons[i].name).c_str(),
+                     &g_buttons[i]);
     if (!ok) {
         HW2VR_LOG("vrinput: action setup failed - no controller input");
         return false;
@@ -118,14 +133,23 @@ const State& update() {
     }
     if (pose.bActive) g_logged_inactive = false;
 
-    g_state.left_click = track(read_button(g_left_click), prev.left_click);
+    g_state.left_click = read_pull(g_left_click, prev.left_click, &g_state.click_pull);
     g_state.right_click = track(read_button(g_right_click), prev.right_click);
     read_vector(g_camera, g_state.camera);
     read_vector(g_zoom, g_state.zoom);
-    for (int i = 0; i < input::kButtonCount; ++i) g_state.buttons[i] = track(read_button(g_buttons[i]), prev.buttons[i]);
+    for (int i = 0; i < input::kButtonCount; ++i) {
+        float pull = 0.0f;
+        g_state.buttons[i] = i == input::kLeftTrigger ? read_pull(g_buttons[i], prev.buttons[i], &pull)
+                                                      : track(read_button(g_buttons[i]), prev.buttons[i]);
+    }
     for (int i = 0; i < input::kButtonCount; ++i)
         if (g_state.buttons[i].pressed) HW2VR_VLOG("vrinput: %s pressed", input::kButtons[i].name);
     return g_state;
+}
+
+void set_trigger_thresholds(float press, float release) {
+    g_press = press;
+    g_release = release < press ? release : press * 0.6f;
 }
 
 void pulse(float seconds, float amplitude) {

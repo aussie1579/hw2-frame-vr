@@ -69,6 +69,7 @@ struct Api {
     void(HW2VR_APIENTRY* Uniform1f)(GLint, GLfloat);
     void(HW2VR_APIENTRY* Uniform2f)(GLint, GLfloat, GLfloat);
     void(HW2VR_APIENTRY* Uniform3f)(GLint, GLfloat, GLfloat, GLfloat);
+    void(HW2VR_APIENTRY* Uniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
     void(HW2VR_APIENTRY* UniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
     void(HW2VR_APIENTRY* GetFramebufferAttachmentParameteriv)(GLenum, GLenum, GLenum, GLint*);
     void*(HW2VR_APIENTRY* FenceSync)(GLenum, GLbitfield);

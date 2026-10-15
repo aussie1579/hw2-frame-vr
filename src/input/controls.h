@@ -9,7 +9,8 @@
 //   - right-hand laser = the mouse. On the HUD panel's UI the cursor goes to the panel spot; elsewhere the laser
 //     points into the world: where it touches the scene (stereo/depth_probe.h) the mouse goes to the pixel through
 //     which the game's camera sees that point and the cursor is drawn right there, at the ship's depth.
-//     Trigger = left click, bumper = right click (filtered aim, short cursor freeze round clicks, haptic tick).
+//     Trigger (a light pull) = left click, bumper = right click; a press holds the cursor still until the laser
+//     moves past drag_degrees, so clicks never become tiny drags (filtered aim, haptic ticks).
 //   - left stick orbits the camera (emulated right-mouse drag), right stick up/down zooms (mouse wheel).
 //   - every other button holds its hw2vr.ini [buttons] key(s) while held, or runs a VR action (recentre...).
 //   - movable panel layout only (shelved): the grab bar under the panel moves, resizes and curves it.
@@ -23,7 +24,8 @@ struct Settings {
     bool camera_invert_y = false;
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;
-    int click_freeze_ms = 120;
+    int click_freeze_ms = 80;       // the cursor stays put this long after a release
+    float drag_degrees = 1.5f;      // a held click starts dragging once the laser moves this far
     double filter_min_cutoff = 1.0, filter_beta = 0.007;  // 1-euro filter on the cursor, in pixels
     bool haptics = true;
     bool show_beam = true;

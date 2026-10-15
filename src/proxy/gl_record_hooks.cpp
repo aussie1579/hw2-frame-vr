@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "common/log.h"
+#include "hud/marker_geometry.h"
 #include "proxy/real_gl.h"
 #include "stereo/frame_replay.h"
 
@@ -131,6 +132,7 @@ std::unordered_map<GLuint, GLuint> g_vao_element_buffer;
 
 void __stdcall my_glBindVertexArray(GLuint vao) {
     g_vao = vao;
+    markers::on_bind_vertex_array(vao);
     if (g_recording) Sig<real_glBindVertexArray>::record<real_glBindVertexArray>(vao);
     real_glBindVertexArray(vao);
 }
@@ -138,6 +140,7 @@ void __stdcall my_glBindVertexArray(GLuint vao) {
 void __stdcall my_glBindBuffer(GLenum target, GLuint buffer) {
     if (target == kArrayBuffer) g_array_buffer = buffer;
     else if (target == kElementArrayBuffer) g_vao_element_buffer[g_vao] = buffer;
+    markers::on_bind_buffer(target, buffer);
     if (g_recording) Sig<real_glBindBuffer>::record<real_glBindBuffer>(target, buffer);
     real_glBindBuffer(target, buffer);
 }
@@ -147,6 +150,7 @@ void replay_buffer_data(const replay::Cmd& c) {
     real_glBufferData(c.w[0], static_cast<GLsizeiptr>(c.w[1]), payload(c.w[2]), c.w[3]);
 }
 void __stdcall my_glBufferData(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
+    markers::on_buffer_data(target, size, data);
     if (g_recording) replay::push({&replay_buffer_data, {target, static_cast<uint32_t>(size), store(data, size), usage}});
     real_glBufferData(target, size, data, usage);
 }
@@ -155,6 +159,7 @@ void replay_buffer_sub_data(const replay::Cmd& c) {
     real_glBufferSubData(c.w[0], static_cast<GLintptr>(c.w[1]), static_cast<GLsizeiptr>(c.w[2]), payload(c.w[3]));
 }
 void __stdcall my_glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
+    markers::on_buffer_sub_data(target, offset, size, data);
     if (g_recording)
         replay::push({&replay_buffer_sub_data,
                       {target, static_cast<uint32_t>(offset), static_cast<uint32_t>(size), store(data, size)}});
@@ -192,6 +197,7 @@ struct UniformMatrix {
 // Vertex attribute pointers are buffer offsets when an array buffer is bound; client arrays can't be replayed.
 void __stdcall my_glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean norm, GLsizei stride,
                                         const void* pointer) {
+    markers::on_vertex_attrib_pointer(index, size, type, stride, pointer);
     if (g_recording) {
         if (g_array_buffer == 0) replay::mark_unreplayable("client-side vertex array");
         Sig<real_glVertexAttribPointer>::record<real_glVertexAttribPointer>(index, size, type, norm, stride, pointer);
@@ -199,6 +205,7 @@ void __stdcall my_glVertexAttribPointer(GLuint index, GLint size, GLenum type, G
     real_glVertexAttribPointer(index, size, type, norm, stride, pointer);
 }
 void __stdcall my_glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void* pointer) {
+    markers::on_vertex_attrib_pointer(index, size, type, stride, pointer);  // integer: never used as a position
     if (g_recording) {
         if (g_array_buffer == 0) replay::mark_unreplayable("client-side vertex array");
         Sig<real_glVertexAttribIPointer>::record<real_glVertexAttribIPointer>(index, size, type, stride, pointer);
@@ -240,8 +247,11 @@ struct TexParameterVector {
 // Deletes during a recorded frame wait until after the replay.
 template <auto& Real, replay::Kind K>
 void __stdcall deferred_delete(GLsizei n, const GLuint* names) {
-    if (K == replay::Kind::VertexArrays)
+    if (K == replay::Kind::VertexArrays) {
         for (GLsizei i = 0; i < n; ++i) g_vao_element_buffer.erase(names[i]);
+        markers::on_delete_vertex_arrays(n, names);
+    }
+    if (K == replay::Kind::Buffers) markers::on_delete_buffers(n, names);
     if (!replay::defer_delete(K, n, names)) Real(n, names);
 }
 

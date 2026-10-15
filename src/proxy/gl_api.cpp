@@ -86,6 +86,7 @@ bool load() {
     ext_fn(a.Uniform1f, "glUniform1f");
     ext_fn(a.Uniform2f, "glUniform2f");
     ext_fn(a.Uniform3f, "glUniform3f");
+    ext_fn(a.Uniform4f, "glUniform4f");
     ext_fn(a.UniformMatrix4fv, "glUniformMatrix4fv");
     ext_fn(a.GetFramebufferAttachmentParameteriv, "glGetFramebufferAttachmentParameteriv");
     ext_fn(a.FenceSync, "glFenceSync");

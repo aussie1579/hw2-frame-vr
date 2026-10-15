@@ -115,6 +115,26 @@ bool apply_projection_override(const float proj[16], float out[16], bool view_sp
     return true;
 }
 
+bool place_at_depth(const float ortho[16], float view_depth, float out[16]) {
+    if (!g_have_game_projection || !(g_vr || g_debug) || view_depth <= 0.0f) return false;
+    const float* g = g_game_projection;
+    // NDC (x, y) -> the game-view point on the plane z = -depth that the game camera sees there (z is dropped).
+    float plane[16] = {};
+    plane[0] = view_depth / g[0];
+    plane[5] = view_depth / g[5];
+    plane[12] = view_depth * g[8] / g[0];
+    plane[13] = view_depth * g[9] / g[5];
+    plane[14] = -view_depth;
+    plane[15] = 1.0f;
+    float p[16], pe[16], pep[16];
+    if (g_vr) eye_projection(g, g_frustum, p);
+    else std::memcpy(p, g, sizeof p);
+    mat4::multiply(p, g_eye_full, pe);
+    mat4::multiply(pe, plane, pep);
+    mat4::multiply(pep, ortho, out);
+    return true;
+}
+
 void note_game_projection(const float proj[16], unsigned draw_framebuffer) {
     if (proj[0] > 0.0f) g_game_tan_half_fov_x = 1.0f / proj[0];
     std::memcpy(g_game_projection, proj, sizeof g_game_projection);

@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "common/log.h"
+#include "proxy/engine_hooks.h"
 #include "proxy/gl_api.h"
+#include "stereo/depth_probe.h"
 
 namespace hw2vr::hud {
 namespace {
@@ -34,6 +36,16 @@ gl::GLint g_saved_blend[4];
 gl::GLint g_saved_viewport[4];
 gl::GLboolean g_saved_scissor = 0;
 
+// World-space markers (2D draws before the game's PHASE_UIIn): placed at their ship's depth in each eye. The
+// classification and depth of every 2D HUD draw are kept in order, so the second-eye replay repeats them exactly.
+bool g_world_markers = true;
+std::vector<bool> g_kinds;    // per 2D HUD draw this frame: true = world marker
+std::vector<float> g_depths;  // per world marker this frame: view depth (game units)
+size_t g_kind_replay = 0, g_depth_replay = 0;
+float g_frame_depth = 0.0f, g_last_depth = 0.0f;  // last anchored depth this frame / ever
+constexpr float kDefaultMarkerDepth = 2000.0f;    // game units (20 m at the default world scale)
+unsigned g_world_draws = 0, g_world_anchored = 0;
+
 HWND g_window = nullptr;
 int g_cursor_override_x = -1, g_cursor_override_y = -1;
 gl::GLuint g_cursor_tex = 0, g_cursor_fbo = 0;
@@ -42,7 +54,7 @@ Cursor g_cursor, g_last_cursor;
 // Panel filter: the overlay's mipmaps sampled 2x2 per output pixel one level above the output size (a box filter).
 gl::GLuint g_panel_tex = 0, g_panel_fbo = 0, g_panel_program = 0, g_panel_vao = 0;
 int g_panel_width = 0, g_panel_height = 0;
-gl::GLint g_loc_src = -1, g_loc_texel = -1, g_loc_lod = -1;
+gl::GLint g_loc_src = -1, g_loc_texel = -1, g_loc_lod = -1, g_loc_backing = -1;
 bool g_panel_failed = false;
 
 // UI coverage mask: alpha of an overlay mip level, read into a ring of pixel-pack buffers and mapped a frame later.
@@ -67,11 +79,13 @@ in vec2 v_uv;
 uniform sampler2D u_src;
 uniform vec2 u_texel;  // one output pixel in uv
 uniform float u_lod;
+uniform vec4 u_backing;  // premultiplied colour behind the UI (console)
 out vec4 o_color;
 void main() {
     vec2 d = u_texel * 0.25;
-    o_color = 0.25 * (textureLod(u_src, v_uv + vec2(-d.x, -d.y), u_lod) + textureLod(u_src, v_uv + vec2(d.x, -d.y), u_lod) +
+    vec4 ui = 0.25 * (textureLod(u_src, v_uv + vec2(-d.x, -d.y), u_lod) + textureLod(u_src, v_uv + vec2(d.x, -d.y), u_lod) +
                       textureLod(u_src, v_uv + vec2(-d.x, d.y), u_lod) + textureLod(u_src, v_uv + vec2(d.x, d.y), u_lod));
+    o_color = ui + (1.0 - ui.a) * u_backing;
 }
 )";
 
@@ -172,6 +186,10 @@ void end_frame() {
     g_ready = false;
     g_last_cursor = g_cursor;
     g_cursor.drawn = false;
+    g_kinds.clear();
+    g_depths.clear();
+    g_kind_replay = g_depth_replay = 0;
+    g_frame_depth = 0.0f;
 
     if (best < kMinOrthoUploads) winner = 0;
     if (winner == 0) {
@@ -197,18 +215,47 @@ int overlay_height() { return g_tex ? g_tex_height : 0; }
 
 DrawAction draw_action(unsigned draw_fbo, unsigned program, bool is_2d) {
     if (!g_ready) return DrawAction::Draw;
-    bool to_overlay = false;
     if (is_hud_fbo(draw_fbo)) {
-        if (is_2d && !g_replaying) g_ui_programs.insert(program);
-        to_overlay = is_2d;  // 3D overlay stays in the game's HUD layer, drawn per eye
-    } else if (draw_fbo == 0 && g_ui_programs.count(program) != 0) {  // UI drawn after the composite: the cursor
-        return g_replaying ? DrawAction::Skip : DrawAction::RedirectCursor;
+        if (!is_2d) return DrawAction::Draw;  // 3D overlay stays in the game's HUD layer, drawn per eye
+        if (g_replaying) {
+            const bool world = g_kind_replay < g_kinds.size() && g_kinds[g_kind_replay];
+            ++g_kind_replay;
+            return world ? DrawAction::PlaceAtDepth : DrawAction::Skip;
+        }
+        g_ui_programs.insert(program);
+        // World-space HUD layers come before the game runs PHASE_UIIn (proxy/engine_hooks.h).
+        const bool world = g_world_markers && engine::installed() && !engine::screen_ui_phase();
+        g_kinds.push_back(world);
+        return world ? DrawAction::PlaceAtDepth : DrawAction::Redirect;
     }
-    if (!to_overlay) return DrawAction::Draw;
-    return g_replaying ? DrawAction::Skip : DrawAction::Redirect;
+    if (draw_fbo == 0 && g_ui_programs.count(program) != 0)  // UI drawn after the composite: the cursor
+        return g_replaying ? DrawAction::Skip : DrawAction::RedirectCursor;
+    return DrawAction::Draw;
 }
 
-void set_replaying(bool on) { g_replaying = on; }
+float world_marker_depth(const float* bounds) {
+    if (g_replaying) return g_depth_replay < g_depths.size() ? g_depths[g_depth_replay++] : g_last_depth;
+    float z = 0.0f;
+    ++g_world_draws;
+    if (bounds && depth::anchor_view_depth(bounds, &z)) {
+        g_frame_depth = g_last_depth = z;
+        ++g_world_anchored;
+    } else {
+        // No surface behind it (a health bar above its ship, a label beside it): the marker drawn just before it
+        // belongs to the same ship.
+        z = g_frame_depth > 0.0f ? g_frame_depth : g_last_depth > 0.0f ? g_last_depth : kDefaultMarkerDepth;
+    }
+    g_depths.push_back(z);
+    return z;
+}
+
+void set_world_markers(bool on) { g_world_markers = on; }
+bool replaying() { return g_replaying; }
+
+void set_replaying(bool on) {
+    g_replaying = on;
+    g_kind_replay = g_depth_replay = 0;
+}
 
 void begin_redirect(unsigned /*draw_fbo*/) {
     const gl::Api& a = gl::api();
@@ -273,7 +320,7 @@ void end_cursor_redirect(unsigned draw_fbo) {
     a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, draw_fbo);
 }
 
-unsigned build_panel_texture(int width, int height) {
+unsigned build_panel_texture(int width, int height, float backing) {
     if (!g_tex || g_panel_failed || width <= 0 || height <= 0) return 0;
     const gl::Api& a = gl::api();
     gl::StateGuard guard;
@@ -287,6 +334,7 @@ unsigned build_panel_texture(int width, int height) {
         g_loc_src = a.GetUniformLocation(g_panel_program, "u_src");
         g_loc_texel = a.GetUniformLocation(g_panel_program, "u_texel");
         g_loc_lod = a.GetUniformLocation(g_panel_program, "u_lod");
+        g_loc_backing = a.GetUniformLocation(g_panel_program, "u_backing");
         a.GenVertexArrays(1, &g_panel_vao);  // empty: the vertices come from gl_VertexID
     }
     if (width != g_panel_width || height != g_panel_height) {
@@ -306,6 +354,8 @@ unsigned build_panel_texture(int width, int height) {
     a.Uniform2f(g_loc_texel, 1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height));
     const float ratio = static_cast<float>(g_tex_width) / static_cast<float>(width);
     a.Uniform1f(g_loc_lod, ratio > 2.0f ? std::log2(ratio) - 1.0f : 0.0f);
+    const float b = std::clamp(backing, 0.0f, 1.0f);
+    a.Uniform4f(g_loc_backing, 0.02f * b, 0.03f * b, 0.05f * b, b);  // dark blue-grey
     a.DrawArrays(gl::TRIANGLES, 0, 3);
     update_ui_mask();
     return g_panel_tex;
@@ -366,7 +416,11 @@ void update_ui_mask() {
 
 }  // namespace
 
-TestState test_state() { return {g_hud_fbo, g_tex, g_overlay_frames, g_redirected, g_cursor_tex, g_cursor_draws}; }
+TestState test_state() {
+    return {g_hud_fbo, g_tex, g_overlay_frames, g_redirected, g_cursor_tex, g_cursor_draws, g_world_draws, g_world_anchored};
+}
+
+float last_world_marker_depth() { return g_last_depth; }
 
 void release() {
     const gl::Api& a = gl::api();

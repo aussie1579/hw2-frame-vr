@@ -198,6 +198,7 @@ struct Gl {
 // --- HUD pipeline ([debug] hud_capture = 1): capture, transmittance -> coverage, clear, cursor redirect ----------
 struct HudTestState {
     unsigned hud_fbo, overlay_texture, overlay_frames, redirected_draws, cursor_texture, cursor_draws;  // hud::TestState
+    unsigned world_draws, world_anchored;
 };
 using PFNTESTSTATE = HudTestState (*)();
 using PFNTESTSETCURSOR = void (*)(int, int);
@@ -468,6 +469,115 @@ void depth_probe_test(const Gl& gl, HMODULE proxy) {
         check(ok, c.what);
     }
     check(glGetError() == GL_NO_ERROR, "no GL errors in the depth probe test");
+
+    // Marker depth grid: the same scene seen through the game camera, one ray per 20-pixel cell. A marker over the
+    // quad (screen centre) gets its view depth 200; one over empty space gets nothing.
+    using PFNANCHOR = float (*)(float, float, float, float, int, int);
+    auto anchor = reinterpret_cast<PFNANCHOR>(GetProcAddress(proxy, "hw2vr_test_anchor_depth"));
+    check(anchor != nullptr, "proxy exports hw2vr_test_anchor_depth");
+    if (anchor) {
+        const float centre = anchor(0.45f, 0.4f, 0.55f, 0.6f, kW, kH), corner = anchor(0.0f, 0.0f, 0.08f, 0.1f, kW, kH);
+        // A ring round the quad: its middle half is the quad.
+        const float ring = anchor(0.3f, 0.2f, 0.7f, 0.8f, kW, kH);
+        std::printf("  marker grid: centre %.2f, ring round it %.2f, corner %.2f\n", centre, ring, corner);
+        check(std::fabs(centre - 200.0f) < 2.0f && std::fabs(ring - 200.0f) < 2.0f,
+              "marker grid: markers over / round the quad get its view depth (200)");
+        check(corner == -1.0f, "marker grid: a marker over empty space gets nothing");
+    }
+}
+
+// --- World markers: 2D HUD draws before the game's PHASE_UIIn stay in the game's HUD layer at their ship's depth;
+// the ones after it go onto the VR overlay. Uses the HUD framebuffer identified by the HUD pipeline test and the
+// depth scene of the depth probe test (quad at view depth 200 in the middle of the screen).
+using PFNSETUIPHASE = void (*)(int, int);
+using PFNMARKERDEPTH = float (*)();
+void world_marker_test(const Gl& gl, HDC dc, HMODULE proxy) {
+    auto state_fn = reinterpret_cast<PFNTESTSTATE>(GetProcAddress(proxy, "hw2vr_test_state"));
+    auto set_phase = reinterpret_cast<PFNSETUIPHASE>(GetProcAddress(proxy, "hw2vr_test_set_ui_phase"));
+    auto marker_depth = reinterpret_cast<PFNMARKERDEPTH>(GetProcAddress(proxy, "hw2vr_test_last_marker_depth"));
+    check(state_fn && set_phase && marker_depth, "proxy exports the world marker test hooks");
+    if (!state_fn || !set_phase || !marker_depth) return;
+    const HudTestState before = state_fn();
+    const GLuint hud_fbo = before.hud_fbo;
+    RECT rc;
+    GetClientRect(WindowFromDC(dc), &rc);
+    const int w = rc.right, h = rc.bottom;
+    auto bind_fbo = proc<PFNBINDFRAMEBUFFER>("glBindFramebuffer");
+    auto uniform4fv = proc<PFNUNIFORM4FV>("glUniform4fv");
+    auto blend_separate = proc<PFNBLENDFUNCSEPARATE>("glBlendFuncSeparate");
+
+    // Two quads in the ortho [0,1] screen space: a "selection marker" round the screen centre (over the depth
+    // scene's quad) and a "taskbar button" in the bottom-left corner.
+    const float quads[24] = {0.4f, 0.4f, 0.6f, 0.4f, 0.6f, 0.6f, 0.4f, 0.4f, 0.6f, 0.6f, 0.4f, 0.6f,
+                             0.0f, 0.0f, 0.2f, 0.0f, 0.2f, 0.1f, 0.0f, 0.0f, 0.2f, 0.1f, 0.0f, 0.1f};
+    GLuint vao, vbo;
+    proc<PFNGENVERTEXARRAYS>("glGenVertexArrays")(1, &vao);
+    proc<PFNBINDVERTEXARRAY>("glBindVertexArray")(vao);
+    proc<PFNGENBUFFERS>("glGenBuffers")(1, &vbo);
+    proc<PFNBINDBUFFER>("glBindBuffer")(GL_ARRAY_BUFFER, vbo);
+    proc<PFNBUFFERDATA>("glBufferData")(GL_ARRAY_BUFFER, sizeof quads, quads, GL_STATIC_DRAW);
+    proc<PFNVERTEXATTRIBPOINTER>("glVertexAttribPointer")(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    proc<PFNENABLEVERTEXATTRIBARRAY>("glEnableVertexAttribArray")(0);
+    const char* vs = "#version 330 compatibility\nlayout(location = 0) in vec2 inPos;\nuniform mat4 inMatP, inMatMV;\n"
+                     "void main() { gl_Position = inMatP * inMatMV * vec4(inPos, 0.0, 1.0); }\n";
+    const char* fs = "#version 330\nuniform vec4 inTint;\nout vec4 color;\nvoid main() { color = inTint; }\n";
+    const GLuint ui = build_program(gl, vs, fs);
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    const float blue[4] = {0, 0, 0.5f, 0.5f};
+
+    set_phase(1, 0);
+    glEnable(GL_BLEND);
+    for (int frame = 0; frame < 4; ++frame) {
+        bind_fbo(GL_FRAMEBUFFER, hud_fbo);
+        glViewport(0, 0, w, h);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        blend_separate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
+        gl.use_program(ui);
+        for (int i = 0; i < 3; ++i) gl.uniform_matrix4fv(gl.get_uniform_location(ui, "inMatP"), 1, GL_FALSE, kOrtho);
+        gl.uniform_matrix4fv(gl.get_uniform_location(ui, "inMatMV"), 1, GL_FALSE, identity);
+        uniform4fv(gl.get_uniform_location(ui, "inTint"), 1, blue);
+        set_phase(1, 0);
+        glDrawArrays(GL_TRIANGLES, 0, 6);  // world-space layer: the marker
+        set_phase(1, 1);                   // the game runs PHASE_UIIn
+        glDrawArrays(GL_TRIANGLES, 6, 6);  // screen-space layer: the button
+        bind_fbo(GL_FRAMEBUFFER, 0);
+        wglSwapBuffers(dc);
+    }
+    set_phase(0, 0);
+    const HudTestState after = state_fn();
+    std::printf("  world markers: %u placed (%u anchored), last depth %.2f\n", after.world_draws - before.world_draws,
+                after.world_anchored - before.world_anchored, marker_depth());
+    check(after.world_draws - before.world_draws == 4 && after.world_anchored - before.world_anchored == 4,
+          "world markers: one per frame, each anchored on the scene behind it");
+    check(std::fabs(marker_depth() - 200.0f) < 2.0f, "world markers: anchored at the depth scene's quad (200)");
+    check(after.redirected_draws - before.redirected_draws == 4, "screen-space UI after PHASE_UIIn still goes to the overlay");
+
+    std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
+    auto at = [&](float x, float y) { return &px[(static_cast<size_t>(y * h) * w + static_cast<size_t>(x * w)) * 4]; };
+    auto print = [](const char* what, const unsigned char* p) { std::printf("  %-26s %3d,%3d,%3d,%3d\n", what, p[0], p[1], p[2], p[3]); };
+    glBindTexture(GL_TEXTURE_2D, after.overlay_texture);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    print("overlay  marker:", at(0.5f, 0.5f));
+    print("overlay  button:", at(0.1f, 0.05f));
+    check(pixel_near(at(0.5f, 0.5f), 0, 0, 0, 0) && pixel_near(at(0.1f, 0.05f), 0, 0, 64, 128),
+          "overlay: the button only (the marker belongs in the world)");
+    check(glGetError() == GL_NO_ERROR, "no GL errors in the world marker test");
+}
+
+// The UI phase hook's signature, against the real HomeworldRM.exe (mapped as an image, not run). HW2VR_GAME_EXE is
+// set by tools/smoke-test.ps1 when the game is installed.
+void ui_phase_signature_test(HMODULE proxy) {
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetEnvironmentVariableW(L"HW2VR_GAME_EXE", exe, MAX_PATH)) {
+        std::printf("  (HW2VR_GAME_EXE not set - UI phase signature not checked)\n");
+        return;
+    }
+    using PFNFIND = unsigned (*)(const wchar_t*);
+    auto find = reinterpret_cast<PFNFIND>(GetProcAddress(proxy, "hw2vr_test_find_ui_in"));
+    const unsigned rva = find ? find(exe) : 0;
+    std::printf("  PHASE_UIIn call in %ls: RVA 0x%X (Ghidra 0x%08X)\n", exe, rva, rva + 0x400000);
+    check(rva == 0x3161FA, "UI phase hook finds the PHASE_UIIn call (build 12653478: Ghidra 0x007161FA)");
 }
 
 // --- Second-eye replay ([debug] replay_test_offset_x): record, replay with an offset camera, deferred deletes -------
@@ -686,6 +796,8 @@ int main() {
     if (hud_test_requested()) {
         hud_pipeline_test(gl, dc, proxy);
         depth_probe_test(gl, proxy);
+        world_marker_test(gl, dc, proxy);
+        ui_phase_signature_test(proxy);
     }
     if (const float offset = replay_test_offset(); offset != 0.0f) replay_pipeline_test(gl, dc, proxy, offset);
 

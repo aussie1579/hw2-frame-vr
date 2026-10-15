@@ -15,20 +15,20 @@ struct ButtonInfo {
     const wchar_t* default_keys;  // see input/key_names.h for the syntax
 };
 
-// Defaults (Steam Frame): right hand A/B/X/Y/Menu, left hand View/D-pad/trigger/bumper, both stick clicks.
-// HW2 keys from scripts/keybindings.lua (docs/FINDINGS.md "Default keys").
+// Defaults (Steam Frame, after headset test 7). Right hand points and gives orders to what it points at; left hand
+// holds the modifiers, the camera and production. HW2 keys from scripts/keybindings.lua (docs/FINDINGS.md "Input").
 inline constexpr ButtonInfo kButtons[kButtonCount] = {
-    {"a", L"a", L"F"},                   // focus on the selection
-    {"b", L"b", L"Esc"},                 // cancel
-    {"x", L"x", L"Space"},               // Sensors Manager
-    {"y", L"y", L"M"},                   // move order
+    {"a", L"a", L"M"},                   // move order
+    {"b", L"b", L"Esc"},                 // cancel / back
+    {"x", L"x", L"F"},                   // focus the camera on the selection
+    {"y", L"y", L"Space"},               // Sensors Manager (strategic map)
     {"menu", L"menu", L"F10"},           // in-game menu
     {"view", L"view", L"Tab"},           // tactical overlay
-    {"dpad_up", L"dpad_up", L"Up"},      // camera pan (held)
-    {"dpad_down", L"dpad_down", L"Down"},
-    {"dpad_left", L"dpad_left", L"Left"},
-    {"dpad_right", L"dpad_right", L"Right"},
-    {"left_trigger", L"left_trigger", L"Shift"},  // add to selection; move orders: vertical
+    {"dpad_up", L"dpad_up", L"B"},       // build manager
+    {"dpad_down", L"dpad_down", L"S"},   // stop (cancel orders)
+    {"dpad_left", L"dpad_left", L"L"},   // launch manager
+    {"dpad_right", L"dpad_right", L"R"}, // research manager
+    {"left_trigger", L"left_trigger", L"Shift"},  // add to selection; move orders: up/down (held, light pull)
     {"left_bumper", L"left_bumper", L"Ctrl"},     // force attack; Ctrl+number assigns groups
     {"left_stick", L"left_stick", L"Home"},       // focus on the mothership
     {"right_stick", L"right_stick", L"recentre"}, // recentre the view (VR action, not a key)

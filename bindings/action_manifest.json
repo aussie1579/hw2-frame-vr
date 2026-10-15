@@ -11,8 +11,12 @@
       "type": "pose"
     },
     {
-      "name": "/actions/main/in/leftclick",
-      "type": "boolean"
+      "name": "/actions/main/in/click",
+      "type": "vector1"
+    },
+    {
+      "name": "/actions/main/in/left_trigger",
+      "type": "vector1"
     },
     {
       "name": "/actions/main/in/rightclick",
@@ -67,10 +71,6 @@
       "type": "boolean"
     },
     {
-      "name": "/actions/main/in/button_left_trigger",
-      "type": "boolean"
-    },
-    {
       "name": "/actions/main/in/button_left_bumper",
       "type": "boolean"
     },
@@ -98,7 +98,8 @@
       "language_tag": "en_US",
       "/actions/main": "Homeworld 2 VR",
       "/actions/main/in/pointer": "Laser pointer (mouse cursor)",
-      "/actions/main/in/leftclick": "Left click (select, grab the screen bar)",
+      "/actions/main/in/click": "Left click: trigger pull (select, drag, grab the console bar)",
+      "/actions/main/in/left_trigger": "Hotkey: Left trigger pull (key set in hw2vr.ini [buttons])",
       "/actions/main/in/rightclick": "Right click (orders menu)",
       "/actions/main/in/camera": "Camera orbit (right-mouse drag)",
       "/actions/main/in/zoom": "Mouse wheel (zoom)",
@@ -113,7 +114,6 @@
       "/actions/main/in/button_dpad_down": "Hotkey: D-pad down (key set in hw2vr.ini [buttons])",
       "/actions/main/in/button_dpad_left": "Hotkey: D-pad left (key set in hw2vr.ini [buttons])",
       "/actions/main/in/button_dpad_right": "Hotkey: D-pad right (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_left_trigger": "Hotkey: Left trigger (key set in hw2vr.ini [buttons])",
       "/actions/main/in/button_left_bumper": "Hotkey: Left bumper (key set in hw2vr.ini [buttons])",
       "/actions/main/in/button_left_stick": "Hotkey: Left stick click (key set in hw2vr.ini [buttons])",
       "/actions/main/in/button_right_stick": "Hotkey: Right stick click (key set in hw2vr.ini [buttons])"
