@@ -37,7 +37,9 @@ void apply_view_override(const float in[16], float out[16], CameraUniform source
 bool apply_projection_override(const float proj[16], float out[16], bool view_space_input);
 
 // The game's own main-camera projection (infinite far plane), remembered for sizing the HUD overlay.
-void note_game_projection(const float proj[16]);
+// draw_framebuffer: where the main 3D scene is being drawn (its depth buffer is what the laser is tested against).
+void note_game_projection(const float proj[16], unsigned draw_framebuffer);
+unsigned scene_framebuffer();  // 0 = not seen yet (or the default framebuffer)
 float game_tan_half_fov_x();
 const float* game_projection();  // the last one seen (column-major), nullptr before the first
 

@@ -10,6 +10,7 @@
 #include "input/controls.h"
 #include "proxy/gl_api.h"
 #include "proxy/gl_hooks.h"
+#include "stereo/depth_probe.h"
 #include "stereo/eye_math.h"
 #include "stereo/frame_replay.h"
 #include "stereo/view_override.h"
@@ -33,6 +34,9 @@ float g_camera_pose[16];          // its inverse: the seated pose of the game ca
 
 HWND g_window = nullptr;
 int g_client_w = 0, g_client_h = 0;
+bool g_window_checked = false;  // fit_window ran for this VR session
+bool g_window_moved = false;
+RECT g_window_rect_before = {};  // where it was, to put it back when VR stops
 long long g_last_input_qpc = 0;
 
 int g_width = 0, g_height = 0;
@@ -47,6 +51,7 @@ long long g_window_start = 0;
 unsigned g_window_frames = 0, g_window_replays = 0;
 double g_window_replay_ms = 0.0;
 const char* g_last_fallback = "";
+unsigned g_last_probes = 0, g_last_results = 0, g_last_hits = 0;
 
 void release_targets() {
     const gl::Api& a = gl::api();
@@ -101,9 +106,45 @@ void start_vr() {
     g_eye_valid[0] = g_eye_valid[1] = false;
 }
 
+// The laser moves the real cursor, which can't leave the desktop: a windowed game whose title bar pushes the client
+// area past the screen edge has UI the laser can't reach. While VR runs, the window is moved so its client area
+// starts at its monitor's top-left (the title bar goes off-screen); stop_vr puts it back.
+void fit_window(HWND window) {
+    g_window_checked = true;
+    RECT client{}, frame{};
+    if (!GetClientRect(window, &client) || !GetWindowRect(window, &frame)) return;
+    POINT tl{0, 0};
+    ClientToScreen(window, &tl);
+    MONITORINFO mi{sizeof mi};
+    if (!GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &mi)) return;
+    const RECT& m = mi.rcMonitor;
+    const bool fits = tl.x >= m.left && tl.y >= m.top && tl.x + client.right <= m.right && tl.y + client.bottom <= m.bottom;
+    if (fits) return;
+    if (client.right > m.right - m.left || client.bottom > m.bottom - m.top) {
+        HW2VR_LOG("vr: the game's client area %ldx%ld is bigger than its monitor - some UI is out of the laser's reach",
+                  client.right, client.bottom);
+        return;
+    }
+    const int x = frame.left + (m.left - tl.x), y = frame.top + (m.top - tl.y);
+    g_window_rect_before = frame;
+    g_window_moved = SetWindowPos(window, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS) != 0;
+    HW2VR_LOG("vr: client area was partly off-screen at (%ld, %ld) - window moved so it starts at the monitor's corner "
+              "(%ld, %ld)%s", tl.x, tl.y, m.left, m.top, g_window_moved ? "" : " FAILED");
+}
+
+void restore_window() {
+    if (g_window_moved && g_window && IsWindow(g_window))
+        SetWindowPos(g_window, nullptr, g_window_rect_before.left, g_window_rect_before.top, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+    g_window_moved = false;
+    g_window_checked = false;
+}
+
 void stop_vr() {
+    restore_window();
     controls::stop();
     panel::stop();
+    depth::release();
     stereo::clear_vr_eye();
     hud::set_capture(false, g_settings.hud_premultiplied);
     hud::release();
@@ -150,6 +191,7 @@ void update_controls(const float hmd[16]) {
     f.hmd = hmd;
     f.camera_pose = g_camera_pose;
     f.game_projection = stereo::game_projection();
+    f.world_scale = g_settings.world_scale;
     f.dt = dt > 0.1 ? 0.1 : dt;  // a hitch must not fling the camera
     const controls::Requests req = controls::update(f);
     if (req.recentre) {
@@ -186,6 +228,11 @@ void telemetry(bool replayed, double replay_ms) {
     const double seconds = double(now.QuadPart - g_window_start) / double(g_qpf.QuadPart);
     if (seconds < 5.0) return;
     const replay::Stats s = replay::stats();
+    const depth::TestState d = depth::test_state();
+    if (d.probes != g_last_probes)
+        HW2VR_LOG("vr: laser depth: %u probes, %u results, %u touching something (last 5 s)", d.probes - g_last_probes,
+                  d.results - g_last_results, d.hits - g_last_hits);
+    g_last_probes = d.probes, g_last_results = d.results, g_last_hits = d.hits;
     if (g_settings.sync_stereo)
         HW2VR_LOG("vr: %.1f fps | synchronized stereo: %u/%u frames replayed, %.2f ms CPU per replay, %u GL calls and "
                   "%u KB per frame%s%s",
@@ -221,6 +268,7 @@ void before_swap(HDC dc) {
 
     RECT rc;
     g_window = WindowFromDC(dc);
+    if (g_settings.fit_window && !g_window_checked) fit_window(g_window);
     if (!GetClientRect(g_window, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
     g_client_w = rc.right;
     g_client_h = rc.bottom;
@@ -232,6 +280,7 @@ void before_swap(HDC dc) {
         if (g_settings.sync_stereo) {
             // The game just rendered the left eye; replay the same frame for the right eye.
             capture_eye(0);
+            depth::run(g_width, g_height);  // the laser against the left eye's depth, before the replay redraws it
             std::memcpy(g_pose_used[0], g_frame_pose, sizeof g_frame_pose);
             if (replay::replayable()) {
                 LARGE_INTEGER t0, t1;
@@ -251,6 +300,7 @@ void before_swap(HDC dc) {
             replay::flush_deferred_deletes();
         } else {
             capture_eye(g_eye);
+            depth::run(g_width, g_height);
         }
         for (int eye = 0; eye < 2; ++eye)
             if (g_eye_valid[eye]) vr::submit(eye, g_eye_tex[eye], g_pose_used[eye]);
@@ -281,7 +331,7 @@ void after_swap() {
     } else if (!panel::placed()) {
         recentred();  // not recentred yet (headset not worn): SteamVR's seated origin
     }
-    update_controls(hmd);
+    panel::follow(g_camera_pose, hmd, stereo::game_tan_half_fov_x());  // aligned layout: with the head, every frame
     for (int eye = 0; eye < 2; ++eye) {
         stereo::eye_from_game_camera(hmd, g_recentre_inverse, vr::eye_to_head(eye), g_settings.world_scale, g_eye_view[eye]);
         const vr::EyeFrustum& f = vr::frustum(eye);
@@ -295,6 +345,14 @@ void after_swap() {
         set_eye_camera(g_eye);
         std::memcpy(g_pose_used[g_eye], hmd, sizeof hmd);
     }
+    // The laser is tested against the depth of the eye the game renders next.
+    const int rendered = g_settings.sync_stereo ? 0 : g_eye;
+    if (const float* game_proj = stereo::game_projection()) {
+        float eye_proj[16];
+        stereo::eye_projection(game_proj, g_eye_frustum[rendered], eye_proj);
+        depth::set_camera(g_eye_view[rendered], eye_proj);
+    }
+    update_controls(hmd);
     g_have_pose = true;
 }
 

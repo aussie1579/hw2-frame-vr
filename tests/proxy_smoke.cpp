@@ -383,6 +383,93 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
     check(glGetError() == GL_NO_ERROR, "no GL errors in the HUD pipeline");
 }
 
+// --- Laser depth probe: the game's multisampled scene depth, resolved and ray-marched ----------------------------
+// A 4x MSAA scene framebuffer (colour + 32-bit depth renderbuffers, like the game's 16x fbo 1) gets a quad at view
+// depth 200 through a program with the game's main projection (infinite far plane), uploaded through the hooks so
+// the proxy learns the scene framebuffer. Rays in game view space must touch the quad at the right distance.
+using PFNDEPTHPROBE = float (*)(const float*, const float*, int, int);
+using PFNGENRENDERBUFFERS = void(APIENTRY*)(GLsizei, GLuint*);
+using PFNBINDRENDERBUFFER = void(APIENTRY*)(GLenum, GLuint);
+using PFNRENDERBUFFERSTORAGEMS = void(APIENTRY*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using PFNFRAMEBUFFERRENDERBUFFER = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
+using PFNDRAWBUFFERS = void(APIENTRY*)(GLsizei, const GLenum*);
+
+void depth_probe_test(const Gl& gl, HMODULE proxy) {
+    constexpr GLenum kRenderbuffer = 0x8D41, kDepthAttachment = 0x8D00, kDepth32 = 0x81A7, kRgba8 = 0x8058;
+    constexpr int kW = 256, kH = 128;
+    auto probe = reinterpret_cast<PFNDEPTHPROBE>(GetProcAddress(proxy, "hw2vr_test_depth_probe"));
+    check(probe != nullptr, "proxy exports hw2vr_test_depth_probe");
+    if (!probe) return;
+    auto bind_fbo = proc<PFNBINDFRAMEBUFFER>("glBindFramebuffer");
+    auto gen_rb = proc<PFNGENRENDERBUFFERS>("glGenRenderbuffers");
+    auto bind_rb = proc<PFNBINDRENDERBUFFER>("glBindRenderbuffer");
+    auto storage = proc<PFNRENDERBUFFERSTORAGEMS>("glRenderbufferStorageMultisample");
+    auto attach_rb = proc<PFNFRAMEBUFFERRENDERBUFFER>("glFramebufferRenderbuffer");
+    GLuint rb[2], fbo;
+    gen_rb(2, rb);
+    bind_rb(kRenderbuffer, rb[0]);
+    storage(kRenderbuffer, 4, kRgba8, kW, kH);
+    bind_rb(kRenderbuffer, rb[1]);
+    storage(kRenderbuffer, 4, kDepth32, kW, kH);
+    proc<PFNGENFRAMEBUFFERS>("glGenFramebuffers")(1, &fbo);
+    bind_fbo(GL_FRAMEBUFFER, fbo);
+    attach_rb(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, kRenderbuffer, rb[0]);
+    attach_rb(GL_FRAMEBUFFER, kDepthAttachment, kRenderbuffer, rb[1]);
+
+    // Quad: view space x, y in [-50, 50] at z = -200; 90-degree perspective (2:1 aspect), near 3, infinite far.
+    const char* vs = "#version 330 compatibility\nlayout(location = 0) in vec2 inPos;\nuniform mat4 inMatP, inMatMV;\n"
+                     "void main() { gl_Position = inMatP * inMatMV * vec4(inPos * 50.0, -200.0, 1.0); }\n";
+    const char* fs = "#version 330\nout vec4 color;\nvoid main() { color = vec4(1.0); }\n";
+    const GLuint program = build_program(gl, vs, fs);
+    const float proj[16] = {0.5f, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, 0, -6, 0};
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    gl.use_program(program);
+    gl.uniform_matrix4fv(gl.get_uniform_location(program, "inMatP"), 1, GL_FALSE, proj);
+    gl.uniform_matrix4fv(gl.get_uniform_location(program, "inMatMV"), 1, GL_FALSE, identity);
+    const float quad[12] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+    GLuint vao, vbo;
+    proc<PFNGENVERTEXARRAYS>("glGenVertexArrays")(1, &vao);
+    proc<PFNBINDVERTEXARRAY>("glBindVertexArray")(vao);
+    proc<PFNGENBUFFERS>("glGenBuffers")(1, &vbo);
+    proc<PFNBINDBUFFER>("glBindBuffer")(GL_ARRAY_BUFFER, vbo);
+    proc<PFNBUFFERDATA>("glBufferData")(GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+    proc<PFNVERTEXATTRIBPOINTER>("glVertexAttribPointer")(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    proc<PFNENABLEVERTEXATTRIBARRAY>("glEnableVertexAttribArray")(0);
+    glViewport(0, 0, kW, kH);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClearDepth(1.0);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDisable(GL_DEPTH_TEST);
+    bind_fbo(GL_FRAMEBUFFER, 0);
+
+    struct Case {
+        float origin[3], dir[3], expected;  // expected < 0: miss
+        const char* what;
+    };
+    const float s = 1.0f / std::sqrt(1.0f + 0.0625f);
+    const Case cases[] = {
+        {{0, 0, 0}, {0, 0, -1}, 200.0f, "ray straight ahead touches the quad at 200"},
+        {{0, -40, 0}, {0, 0.25f * s, -s}, 200.0f / s, "ray from below, angled up, touches it along its own length"},
+        {{30, 20, -100}, {0, 0, -1}, 100.0f, "ray starting part-way (a hand in front of the camera) measures from its origin"},
+        {{0, 0, 0}, {1, 0, -1}, -1.0f, "ray past the quad's edge (45 degrees right) misses"},
+        {{0, 0, -300}, {0, 0, -1}, -1.0f, "ray starting behind the quad misses (nothing further away)"},
+    };
+    for (const Case& c : cases) {
+        float dir[3] = {c.dir[0], c.dir[1], c.dir[2]};
+        const float n = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+        for (float& v : dir) v /= n;
+        const float t = probe(c.origin, dir, kW, kH);
+        std::printf("  depth probe: %-75s -> %.2f\n", c.what, t);
+        const bool ok = c.expected < 0.0f ? t == -1.0f : std::fabs(t - c.expected) <= 0.01f * c.expected;
+        check(ok, c.what);
+    }
+    check(glGetError() == GL_NO_ERROR, "no GL errors in the depth probe test");
+}
+
 // --- Second-eye replay ([debug] replay_test_offset_x): record, replay with an offset camera, deferred deletes -------
 struct ReplayStats {
     unsigned replays, skipped, commands, bytes;  // mirrors hw2vr::replay::Stats
@@ -596,7 +683,10 @@ int main() {
     check(glGetError() == GL_NO_ERROR, "no GL errors after the mode square");
     check(SwapBuffers(dc) == TRUE, "gdi32 SwapBuffers");
 
-    if (hud_test_requested()) hud_pipeline_test(gl, dc, proxy);
+    if (hud_test_requested()) {
+        hud_pipeline_test(gl, dc, proxy);
+        depth_probe_test(gl, proxy);
+    }
     if (const float offset = replay_test_offset(); offset != 0.0f) replay_pipeline_test(gl, dc, proxy, offset);
 
     for (GLuint p : {scene_v, scene_c, hud, mv_as_view, view_space, hud_p_only}) gl.delete_program(p);

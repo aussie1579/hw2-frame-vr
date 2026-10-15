@@ -17,8 +17,12 @@ struct Config {
     float vr_world_scale = 100.0f;  // game units per real metre (head movement and eye separation)
     bool vr_hud_premultiplied = true;
     bool vr_sync_stereo = true;      // [vr] stereo = sync (both eyes every frame) | afr (alternating frames)
+    bool vr_fit_window = true;       // [vr] fit_window: client area fully on its monitor while VR runs
+    bool vr_hud_movable = false;     // [vr] hud = aligned (spans the game's view) | panel (shelved curved panel)
+    float vr_hud_distance = 3.0f;    // aligned HUD: metres
+    float vr_hud_scale = 1.0f;       // aligned HUD: 1 = spans the game's field of view
 
-    // [panel]: the curved screen with the game's 2D UI, until moved with its grab bar (then hw2vr_panel.ini).
+    // [panel] (hud = panel): the curved screen, until moved with its grab bar (then hw2vr_panel.ini).
     float panel_distance = 1.8f;           // metres
     float panel_width_degrees = 65.0f;     // curved round the player
     float panel_height = -0.1f;            // metres above eye level

@@ -43,6 +43,14 @@ Config load_config(const std::wstring& ini_path) {
     c.vr_world_scale = read_float(ini_path, L"vr", L"world_scale", c.vr_world_scale);
     c.vr_hud_premultiplied =
         GetPrivateProfileIntW(L"vr", L"hud_premultiplied", c.vr_hud_premultiplied ? 1 : 0, ini_path.c_str()) != 0;
+    {
+        wchar_t hud[16];
+        GetPrivateProfileStringW(L"vr", L"hud", L"aligned", hud, static_cast<DWORD>(std::size(hud)), ini_path.c_str());
+        c.vr_hud_movable = _wcsicmp(hud, L"panel") == 0;
+    }
+    c.vr_fit_window = GetPrivateProfileIntW(L"vr", L"fit_window", c.vr_fit_window ? 1 : 0, ini_path.c_str()) != 0;
+    c.vr_hud_distance = read_float(ini_path, L"vr", L"hud_distance", c.vr_hud_distance);
+    c.vr_hud_scale = read_float(ini_path, L"vr", L"hud_scale", c.vr_hud_scale);
 
     c.panel_distance = read_float(ini_path, L"panel", L"distance", c.panel_distance);
     c.panel_width_degrees = read_float(ini_path, L"panel", L"width_degrees", c.panel_width_degrees);

@@ -26,6 +26,7 @@
 #include "proxy/gl_api.h"
 #include "proxy/gl_record_hooks.h"
 #include "proxy/real_gl.h"
+#include "stereo/depth_probe.h"
 #include "stereo/frame_replay.h"
 #include "stereo/gl_snapshot.h"
 #include "stereo/view_override.h"
@@ -209,7 +210,7 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
             if (!info->proj_is_perspective) {
                 hw2vr::hud::note_ortho_projection(g_draw_fbo);
             } else {
-                if (!hud_layer && is_main_projection(value)) hw2vr::stereo::note_game_projection(value);
+                if (!hud_layer && is_main_projection(value)) hw2vr::stereo::note_game_projection(value, g_draw_fbo);
                 if (override_camera &&
                     hw2vr::stereo::apply_projection_override(value, replaced, info->view_space_input())) {
                     real_glUniformMatrix4fv(loc, 1, transpose, replaced);
@@ -333,6 +334,28 @@ extern "C" __declspec(dllexport) unsigned hw2vr_test_build_panel(int width, int 
     return hw2vr::hud::build_panel_texture(width, height);
 }
 extern "C" __declspec(dllexport) int hw2vr_test_ui_at(float u, float v) { return hw2vr::hud::ui_at(u, v); }
+// The laser depth probe on its own: the scene framebuffer seen with the game's camera (identity eye), one ray in
+// game view space. Returns the distance along the ray, -1 = miss, -2 = no result within 1 s, -3 = no scene seen.
+extern "C" __declspec(dllexport) float hw2vr_test_depth_probe(const float origin[3], const float dir[3], int width,
+                                                              int height) {
+    const float* proj = hw2vr::stereo::game_projection();
+    if (!proj || !hw2vr::gl::load()) return -3.0f;
+    float eye[16];
+    hw2vr::mat4::identity(eye);
+    hw2vr::depth::clear_ray();
+    hw2vr::depth::set_camera(eye, proj);
+    hw2vr::depth::set_ray({origin[0], origin[1], origin[2]}, {dir[0], dir[1], dir[2]});
+    hw2vr::depth::run(width, height);
+    hw2vr::gl::api().Flush();
+    for (int i = 0; i < 1000; ++i) {
+        float t = 0.0f;
+        const hw2vr::depth::Result r = hw2vr::depth::latest(&t);
+        if (r == hw2vr::depth::Result::Hit) return t;
+        if (r == hw2vr::depth::Result::Miss) return -1.0f;
+        Sleep(1);
+    }
+    return -2.0f;
+}
 
 namespace {
 

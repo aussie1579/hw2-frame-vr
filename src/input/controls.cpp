@@ -18,6 +18,7 @@
 #include "input/laser_math.h"
 #include "input/sprites.h"
 #include "proxy/gl_api.h"
+#include "stereo/depth_probe.h"
 #include "vr/overlay.h"
 #include "vr/vr_input.h"
 
@@ -72,6 +73,7 @@ float g_grab_distance = 0.0f;
 Vec3 g_grab_offset;        // grabbed spot relative to the bar centre, in panel axes (right, up, normal)
 long long g_tip_until = -1;
 bool g_logged_foreground = false, g_logged_window = false;
+float g_cursor_depth = 0.0f;  // metres from the game camera: where the world cursor floats (last touch)
 
 long long now_ms() { return static_cast<long long>(GetTickCount64()); }
 
@@ -253,6 +255,11 @@ void buttons(const vrinput::State& st, bool allowed, Requests* req) {
             inputsim::keys(bind, false);
             g_held[i] = false;
         }
+        if (b.pressed) {
+            char desc[32];
+            keys::describe(bind, desc, sizeof desc);
+            HW2VR_LOG("controls: %s pressed -> %s", input::kButtons[i].name, desc);
+        }
         if (!b.pressed || (g_dragging && i == input::kRightStick)) continue;  // stick click curves the panel then
         switch (bind.kind) {
             case keys::Binding::Keys:
@@ -278,7 +285,7 @@ void place_cursor(const Frame& f, Aim aim, const Vec3& eye, Vec3* world_point) {
         const Vec3 view = input::unproject_pixel(f.game_projection, static_cast<float>(c.x), static_cast<float>(c.y),
                                                  f.client_w, f.client_h);
         const Vec3 dir = normalize(rotate(f.camera_pose, view));
-        *world_point = position(f.camera_pose) + dir * g_s.cursor_distance;
+        *world_point = position(f.camera_pose) + dir * g_cursor_depth;
         face_eye_pose(*world_point, eye, pose);
         // Same angular size as on the panel.
         const float angle = hud::kCursorSize * panel_pixel / std::max(panel::placement().distance, 0.1f);
@@ -305,6 +312,7 @@ void start(const wchar_t* manifest_path) {
     g_tip_until = -1;
     g_hint_text = nullptr;
     g_logged_window = false;
+    g_cursor_depth = g_s.cursor_distance;
     vrinput::init(manifest_path);
 
     const sprites::Image beam = sprites::beam(), bar = sprites::grab_bar();
@@ -377,8 +385,9 @@ Requests update(const Frame& f) {
     }
 
     const bool showing = panel::placed();
+    const bool movable = showing && panel::movable();  // grab bar and help only on the movable (shelved) panel
     const input::PanelGeometry& g = panel::geometry();
-    if (showing) {
+    if (movable) {
         const input::PanelGeometry bar = bar_layout(g);
         float pose[16];
         bar.pose(pose);
@@ -398,7 +407,7 @@ Requests update(const Frame& f) {
         bar_area.height += 2.0f * kBarMargin;
         float unused[2];
         const bool held = g_mouse_down[0] || g_mouse_down[1];
-        if (showing && !held && bar_area.intersect(origin, dir, unused, &bar_distance)) {
+        if (movable && !held && bar_area.intersect(origin, dir, unused, &bar_distance)) {
             aim = Aim::Bar;
         } else if (showing && g.intersect(origin, dir, hit_uv, &hit_distance)) {
             // The panel is mostly see-through: it only counts where the game's UI has something. A held button
@@ -422,10 +431,33 @@ Requests update(const Frame& f) {
     g_beam.set_color(1.0f, g_dragging ? 0.55f : 1.0f, g_dragging ? 0.15f : 1.0f);
 
     // Help under the bar: while on it or dragging, and a tip for the first 20 s.
-    if (showing && g_tip_until < 0) g_tip_until = now_ms() + kTipMs;
+    if (movable && g_tip_until < 0) g_tip_until = now_ms() + kTipMs;
     if (aim == Aim::Bar || g_dragging) g_tip_until = 0;  // found it
-    set_hint(!showing ? nullptr : (aim == Aim::Bar || g_dragging) ? kBarHelp : now_ms() < g_tip_until ? kTip : nullptr);
-    if (showing) place_hint(g);
+    set_hint(!movable ? nullptr : (aim == Aim::Bar || g_dragging) ? kBarHelp : now_ms() < g_tip_until ? kTip : nullptr);
+    if (movable) place_hint(g);
+    if (!movable) g_bar.hide();
+
+    // Into the world: the laser ray in game view space (game units) goes to the depth probe, and the newest result
+    // (a frame or two old) says where along it the laser touches the scene. Touching: aim at that point, the cursor
+    // sits there. Not touching: aim along the laser's direction, the cursor keeps the last touch's depth.
+    Vec3 world_target = {0, 0, -1};  // game view space: a point, or a direction for "nothing touched"
+    if (aim == Aim::World && f.game_projection) {
+        float inverse[16];
+        mat4::rigid_inverse(f.camera_pose, inverse);
+        const Vec3 o = transform_point(inverse, origin) * f.world_scale, d = rotate(inverse, dir);
+        depth::set_ray(o, d);
+        float t = 0.0f;
+        world_target = d;
+        if (depth::latest(&t) == depth::Result::Hit) {
+            const Vec3 hit = o + d * t;
+            if (hit.z < 0.0f) {
+                world_target = hit;
+                g_cursor_depth = length(hit) / f.world_scale;
+            }
+        }
+    } else {
+        depth::clear_ray();
+    }
 
     // The cursor follows the laser unless the panel is being moved or the camera orbits (that drag owns the mouse).
     const bool busy = g_dragging;
@@ -434,9 +466,8 @@ Requests update(const Frame& f) {
         if (aim == Aim::Panel) {
             aim_cursor(f, hit_uv[0] * f.client_w, hit_uv[1] * f.client_h, f.dt, reset);
         } else if (aim == Aim::World && f.game_projection) {
-            float inverse[16], px, py;
-            mat4::rigid_inverse(f.camera_pose, inverse);
-            if (input::project_direction(f.game_projection, rotate(inverse, dir), f.client_w, f.client_h, &px, &py)) {
+            float px, py;
+            if (input::project_direction(f.game_projection, world_target, f.client_w, f.client_h, &px, &py)) {
                 input::clamp_inside(&px, &py, f.client_w, f.client_h, kEdgeMargin);
                 aim_cursor(f, px, py, f.dt, reset);
             }

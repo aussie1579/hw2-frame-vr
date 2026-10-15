@@ -18,6 +18,7 @@ struct Settings {
     float world_scale = 100.0f;    // game units per real metre
     bool hud_premultiplied = true;
     bool sync_stereo = true;       // both eyes every frame (replay); false = alternating-frame rendering
+    bool fit_window = true;        // move the game window while VR runs so its client area is fully on its monitor
     int key_toggle = VK_F8, key_recentre = VK_F10, key_scale_up = VK_PRIOR, key_scale_down = VK_NEXT;  // Ctrl+Shift+
 };
 

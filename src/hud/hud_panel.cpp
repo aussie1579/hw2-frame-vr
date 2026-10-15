@@ -51,7 +51,7 @@ void clamp_placement(Placement& p) {
     p.distance = std::clamp(p.distance, 0.4f, 8.0f);
     p.side = std::clamp(p.side, -8.0f, 8.0f);
     p.height = std::clamp(p.height, -3.0f, 3.0f);
-    p.width = std::clamp(p.width, 0.3f, 12.0f);
+    p.width = std::clamp(p.width, 0.3f, 30.0f);
     p.curvature = std::clamp(p.curvature, 0.0f, kMaxCurvature);
 }
 
@@ -82,19 +82,39 @@ Placement centred(float distance, float degrees, float height) {
 
 void configure(const Settings& settings) {
     g_settings = settings;
-    load();
+    if (g_settings.movable) load();
 }
 
 bool start() {
     g_placed = false;
     g_tex_width = 0;
     g_logged_size = false;
-    load();  // pick up placement edits made while VR was off
+    if (g_settings.movable) load();  // pick up placement edits made while VR was off
     if (!g_overlay.create("hw2vr.panel", "Homeworld 2 UI", 1, g_settings.premultiplied)) return false;
-    HW2VR_LOG("panel: %.2f m ahead, %.2f m side, %.2f m up, %.2f m wide (%.0f degrees), curvature %.3f",
-              g_placement.distance, g_placement.side, g_placement.height, g_placement.width,
-              g_placement.width / g_placement.distance * 180.0f / kPi, g_placement.curvature);
+    if (g_settings.movable)
+        HW2VR_LOG("panel: movable, %.2f m ahead, %.2f m side, %.2f m up, %.2f m wide (%.0f degrees), curvature %.3f",
+                  g_placement.distance, g_placement.side, g_placement.height, g_placement.width,
+                  g_placement.width / g_placement.distance * 180.0f / kPi, g_placement.curvature);
+    else
+        HW2VR_LOG("panel: aligned with the game's view, %.1f m away, scale %.2f", g_settings.aligned_distance,
+                  g_settings.aligned_scale);
     return true;
+}
+
+bool movable() { return g_settings.movable; }
+
+void follow(const float camera_pose[16], const float hmd_pose[16], float tan_half_fov_x) {
+    if (g_settings.movable) return;
+    // The panel is far closer than the (world-scaled) ships, so it sits at the head's position: leaning would
+    // otherwise slide markers off their ships. Its orientation stays the game camera's.
+    std::memcpy(g_anchor, camera_pose, sizeof g_anchor);
+    g_anchor[12] = hmd_pose[12];
+    g_anchor[13] = hmd_pose[13];
+    g_anchor[14] = hmd_pose[14];
+    g_placed = true;
+    g_placement = Placement{g_settings.aligned_distance, 0.0f, 0.0f,
+                            g_settings.aligned_scale * 2.0f * g_settings.aligned_distance * tan_half_fov_x, 0.0f};
+    apply();
 }
 
 void stop() {
@@ -126,6 +146,7 @@ void apply() {
 }
 
 void save() {
+    if (!g_settings.movable) return;
     write_float(L"distance", g_placement.distance);
     write_float(L"side", g_placement.side);
     write_float(L"height", g_placement.height);

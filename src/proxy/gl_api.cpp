@@ -57,6 +57,7 @@ bool load() {
     export_fn(a.TexParameteri, "glTexParameteri");
     export_fn(a.DrawArrays, "glDrawArrays");
     export_fn(a.PixelStorei, "glPixelStorei");
+    export_fn(a.DrawBuffer, "glDrawBuffer");
     export_fn(a.ReadPixels, "glReadPixels");
     export_fn(a.Flush, "glFlush");
     export_fn(a.GetError, "glGetError");
@@ -84,6 +85,12 @@ bool load() {
     ext_fn(a.Uniform1i, "glUniform1i");
     ext_fn(a.Uniform1f, "glUniform1f");
     ext_fn(a.Uniform2f, "glUniform2f");
+    ext_fn(a.Uniform3f, "glUniform3f");
+    ext_fn(a.UniformMatrix4fv, "glUniformMatrix4fv");
+    ext_fn(a.GetFramebufferAttachmentParameteriv, "glGetFramebufferAttachmentParameteriv");
+    ext_fn(a.FenceSync, "glFenceSync");
+    ext_fn(a.ClientWaitSync, "glClientWaitSync");
+    ext_fn(a.DeleteSync, "glDeleteSync");
     ext_fn(a.GenerateMipmap, "glGenerateMipmap");
     ext_fn(a.BindBuffer, "glBindBuffer");
     ext_fn(a.GenBuffers, "glGenBuffers");

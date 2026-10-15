@@ -39,6 +39,7 @@ struct Api {
     void(HW2VR_APIENTRY* TexParameteri)(GLenum, GLenum, GLint);
     void(HW2VR_APIENTRY* DrawArrays)(GLenum, GLint, GLsizei);
     void(HW2VR_APIENTRY* PixelStorei)(GLenum, GLint);
+    void(HW2VR_APIENTRY* DrawBuffer)(GLenum);
     void(HW2VR_APIENTRY* ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*);
     void(HW2VR_APIENTRY* Flush)();
     GLenum(HW2VR_APIENTRY* GetError)();
@@ -67,6 +68,12 @@ struct Api {
     void(HW2VR_APIENTRY* Uniform1i)(GLint, GLint);
     void(HW2VR_APIENTRY* Uniform1f)(GLint, GLfloat);
     void(HW2VR_APIENTRY* Uniform2f)(GLint, GLfloat, GLfloat);
+    void(HW2VR_APIENTRY* Uniform3f)(GLint, GLfloat, GLfloat, GLfloat);
+    void(HW2VR_APIENTRY* UniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
+    void(HW2VR_APIENTRY* GetFramebufferAttachmentParameteriv)(GLenum, GLenum, GLenum, GLint*);
+    void*(HW2VR_APIENTRY* FenceSync)(GLenum, GLbitfield);
+    GLenum(HW2VR_APIENTRY* ClientWaitSync)(void*, GLbitfield, unsigned long long);
+    void(HW2VR_APIENTRY* DeleteSync)(void*);
     void(HW2VR_APIENTRY* GenerateMipmap)(GLenum);
     void(HW2VR_APIENTRY* BindBuffer)(GLenum, GLuint);
     void(HW2VR_APIENTRY* GenBuffers)(GLsizei, GLuint*);
@@ -102,7 +109,15 @@ constexpr GLenum TEXTURE_2D = 0x0DE1, TEXTURE0 = 0x84C0, RGBA = 0x1908, RGBA8 = 
                  PIXEL_PACK_BUFFER = 0x88EB, PIXEL_PACK_BUFFER_BINDING = 0x88ED, PACK_ALIGNMENT = 0x0D05,
                  PACK_ROW_LENGTH = 0x0D02, BLEND_SRC_RGB = 0x80C9, BLEND_DST_RGB = 0x80C8, BLEND_SRC_ALPHA = 0x80CB,
                  BLEND_DST_ALPHA = 0x80CA, ONE = 1, ONE_MINUS_SRC_ALPHA = 0x0303, ALPHA = 0x1906,
-                 STREAM_READ = 0x88E1, MAP_READ_BIT = 0x0001;
+                 STREAM_READ = 0x88E1, MAP_READ_BIT = 0x0001, NONE = 0, FLOAT = 0x1406, RGBA32F = 0x8814,
+                 DEPTH_ATTACHMENT = 0x8D00, DEPTH_STENCIL_ATTACHMENT = 0x821A, DEPTH_BUFFER_BIT = 0x0100,
+                 DEPTH_COMPONENT = 0x1902, DEPTH_STENCIL = 0x84F9, UNSIGNED_INT = 0x1405, UNSIGNED_INT_24_8 = 0x84FA,
+                 DEPTH_COMPONENT24 = 0x81A6, DEPTH_COMPONENT32 = 0x81A7, DEPTH_COMPONENT32F = 0x8CAC,
+                 DEPTH24_STENCIL8 = 0x88F0, DEPTH32F_STENCIL8 = 0x8CAD, TEXTURE_COMPARE_MODE = 0x884C,
+                 FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE = 0x8CD0, FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE = 0x8211,
+                 FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE = 0x8216, FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE = 0x8217,
+                 UNSIGNED_NORMALIZED = 0x8C17, SYNC_GPU_COMMANDS_COMPLETE = 0x9117, ALREADY_SIGNALED = 0x911A,
+                 CONDITION_SATISFIED = 0x911C;
 
 // Creates (or re-specifies) an RGBA8 texture from 32-bit pixels laid out B,G,R,A in memory (0xAARRGGBB words),
 // rows top to bottom, with clean unpack state; LINEAR filtering, clamped. Returns the texture (0 on failure).

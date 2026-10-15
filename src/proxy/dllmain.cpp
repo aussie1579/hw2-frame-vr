@@ -26,6 +26,9 @@ std::wstring module_dir(HMODULE module) {
 
 void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& dir) {
     hw2vr::panel::Settings panel;
+    panel.movable = cfg.vr_hud_movable;
+    panel.aligned_distance = cfg.vr_hud_distance;
+    panel.aligned_scale = cfg.vr_hud_scale;
     panel.defaults = hw2vr::panel::centred(cfg.panel_distance, cfg.panel_width_degrees, cfg.panel_height);
     panel.pixels_per_degree = cfg.panel_pixels_per_degree;
     panel.premultiplied = cfg.vr_hud_premultiplied;
@@ -70,6 +73,7 @@ bool init(HMODULE self) {
     vr.world_scale = cfg.vr_world_scale;
     vr.hud_premultiplied = cfg.vr_hud_premultiplied;
     vr.sync_stereo = cfg.vr_sync_stereo;
+    vr.fit_window = cfg.vr_fit_window;
     vr.key_toggle = cfg.key_vr_toggle;
     vr.key_recentre = cfg.key_recentre;
     vr.key_scale_up = cfg.key_scale_up;

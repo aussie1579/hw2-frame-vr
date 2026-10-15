@@ -29,6 +29,7 @@ unsigned g_counts[4] = {};  // overrides per CameraUniform in the current frame
 float g_game_tan_half_fov_x = 1.0f / 0.5978f;  // build 12653478 at 3440x1440 until the game tells us otherwise
 float g_game_projection[16] = {};
 bool g_have_game_projection = false;
+unsigned g_scene_framebuffer = 0;
 
 void set_eye(const float e[16]) {
     ++g_generation;
@@ -114,11 +115,14 @@ bool apply_projection_override(const float proj[16], float out[16], bool view_sp
     return true;
 }
 
-void note_game_projection(const float proj[16]) {
+void note_game_projection(const float proj[16], unsigned draw_framebuffer) {
     if (proj[0] > 0.0f) g_game_tan_half_fov_x = 1.0f / proj[0];
     std::memcpy(g_game_projection, proj, sizeof g_game_projection);
     g_have_game_projection = true;
+    g_scene_framebuffer = draw_framebuffer;
 }
+
+unsigned scene_framebuffer() { return g_scene_framebuffer; }
 
 float game_tan_half_fov_x() { return g_game_tan_half_fov_x; }
 const float* game_projection() { return g_have_game_projection ? g_game_projection : nullptr; }
