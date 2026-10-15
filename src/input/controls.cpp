@@ -14,11 +14,12 @@
 #include "common/vec3.h"
 #include "hud/hud_layer.h"
 #include "hud/hud_panel.h"
-#include "input/input_sim.h"
 #include "hud/screen_windows.h"
+#include "input/command_menus.h"
+#include "input/input_sim.h"
 #include "input/laser_math.h"
 #include "input/macro.h"
-#include "input/order_wheel.h"
+#include "input/radial_menu.h"
 #include "input/sprites.h"
 #include "input/tablet.h"
 #include "proxy/gl_api.h"
@@ -29,10 +30,12 @@
 namespace hw2vr::controls {
 namespace {
 
+constexpr float kPi = 3.14159265358979f;
 constexpr float kBeamThickness = 0.004f;  // metres
 constexpr float kBarGap = 0.05f, kBarMargin = 0.02f;
 constexpr float kEdgeMargin = 0.02f;      // world aim stays this fraction inside the window (no edge panning)
 constexpr long long kTipMs = 20000;
+constexpr float kMenuDistance = 0.6f;     // metres from the head: a command menu opens there, on the laser
 // While dragging the panel by its bar, at full stick:
 constexpr float kPushSpeed = 1.0f;   // metres per second along the laser
 constexpr float kSizeSpeed = 0.6f;   // fraction of the width per second
@@ -40,21 +43,21 @@ constexpr float kCurveSpeed = 0.15f; // curvature per second
 
 const wchar_t* const kTip =
     L"HOMEWORLD 2 VR\n"
-    L"Laser = mouse:  trigger = left click,  bumper = right click\n"
-    L"Left stick: orbit the camera     Right stick: zoom\n"
-    L"To move the screen: point at the bar under it, hold the trigger";
+    L"Laser = mouse:  bumper = left click,  trigger = right click (hold it and move to turn the camera)\n"
+    L"Left stick: orbit the camera     Right stick: zoom     D-pad (hold): command menus\n"
+    L"To move the screen: point at the bar next to it, hold the bumper";
 const wchar_t* const kBarHelp =
     L"MOVE THE SCREEN\n"
-    L"Hold the right trigger on this bar and move your hand\n"
+    L"Hold the right bumper on this bar and move your hand\n"
     L"While holding:\n"
     L"Left stick up / down:  push away / pull closer\n"
     L"Left stick left / right:  smaller / bigger\n"
     L"Right stick left / right:  flatter / more curved\n"
     L"Right stick click:  flat, or curved round you";
 
-// What the laser is on, in priority order: the order wheel (while open), the wrist tablet, a game window (status
-// strip, build/research/launch), the grab bar, the panel showing the game's screen UI, the world.
-enum class Aim { None, Panel, World, Bar, Tablet, Window, Wheel };
+// What the laser is on, in priority order: an open command menu, the wrist tablet, a game window (pop-up menu,
+// status strip, build/research/launch), the grab bar, the panel showing the game's screen UI, the world.
+enum class Aim { None, Panel, World, Bar, Tablet, Window, Menu };
 
 Settings g_s;
 bool g_started = false;
@@ -66,22 +69,36 @@ float g_hint_aspect = 0.0f;  // height / width of the hint image
 
 OneEuroFilter g_fx, g_fy;
 Aim g_prev_aim = Aim::None;
-bool g_mouse_down[2] = {};       // buttons we hold down in the game
 long long g_freeze_until = 0;
-// A press holds the cursor where it went down until the laser moves past drag_degrees, so a click never turns
-// into a tiny drag (box select / camera nudge); further than that it drags.
+int g_cursor_x = INT_MIN, g_cursor_y = INT_MIN;  // last client position we put the cursor at
+
+// Bumper = the left mouse button. A press holds the cursor where it went down until the laser moves past
+// drag_degrees, so a click never turns into a tiny drag (box select / camera nudge); further than that it drags.
+bool g_left_down = false;
 bool g_sticky = false;
 Vec3 g_press_dir;
-int g_cursor_x = INT_MIN, g_cursor_y = INT_MIN;  // last client position we put the cursor at
+
+// Trigger = the right mouse button. On the world a tap is the game's right click (its pop-up menu); held and moved
+// past swivel_degrees, the laser's turning becomes mouse motion with the button down - the game's own right-drag
+// camera turn (docs/FINDINGS.md "Input": relative mode). On a game window it is just the right button.
+struct RightButton {
+    bool down = false;
+    bool world = false;   // went down on the world
+    bool swivel = false;  // turning the camera
+    Vec3 press_dir, last_dir;
+    double acc[2] = {};   // mouse counts not sent yet
+};
+RightButton g_right;
 
 bool g_orbiting = false;
 double g_orbit_acc[2] = {}, g_zoom_acc = 0.0;
 double g_orbit_rate[2] = {};  // eased towards the stick's rate, so the view never jerks into motion
 
-// The bumper: aiming into the world it opens the order wheel at the target (the game's own right-click menu would
-// be invisible there); on a game window it is a right click.
-bool g_bumper_click = false;          // a right click goes out when it's released
-int g_anchor_x = 0, g_anchor_y = 0;  // the cursor when the wheel opened: where its order applies
+// The D-pad's command menus: the open one, the button holding it open and the target its orders apply to (the
+// cursor when it opened, valid if the laser was on the world).
+int g_menu = -1, g_menu_button = -1, g_menu_slice = -1;
+int g_anchor_x = 0, g_anchor_y = 0;
+bool g_anchor_valid = false;
 bool g_held[input::kButtonCount] = {};
 
 bool g_dragging = false;
@@ -109,13 +126,21 @@ input::PanelGeometry bar_layout(const input::PanelGeometry& p) {
     return b;
 }
 
+void close_menu() {
+    if (g_menu >= 0) radial::close();
+    g_menu = g_menu_button = g_menu_slice = -1;
+}
+
 void release_mouse() {
     g_sticky = false;
     macro::clear();
-    if (wheel::is_open()) wheel::close();
-    g_bumper_click = false;
-    for (int b = 0; b < 2; ++b)
-        if (g_mouse_down[b]) inputsim::mouse_button(b, false), g_mouse_down[b] = false;
+    close_menu();
+    if (g_left_down) inputsim::mouse_button(0, false), g_left_down = false;
+    if (g_right.down) {
+        inputsim::mouse_button(1, false);
+        screens::popup_cancel();
+        g_right = RightButton{};
+    }
     if (g_orbiting) inputsim::mouse_button(1, false), g_orbiting = false;
 }
 
@@ -216,21 +241,87 @@ void aim_cursor(const Frame& f, float px, float py, double dt, bool reset_filter
     inputsim::set_cursor_client(f.window, x, y);
 }
 
-void click(const vrinput::ButtonState& b, int button, bool can_press, const Vec3& dir) {
-    if (b.pressed && can_press && !g_mouse_down[button]) {
-        inputsim::mouse_button(button, true);
-        g_mouse_down[button] = true;
+// Where the game's cursor is: where we last put it, or where Windows says.
+void cursor_position(const Frame& f, int* x, int* y) {
+    *x = g_cursor_x, *y = g_cursor_y;
+    if (*x == INT_MIN && !inputsim::cursor_client(f.window, x, y)) *x = f.client_w / 2, *y = f.client_h / 2;
+}
+
+// Bumper: the left mouse button.
+void left_button(const vrinput::ButtonState& b, bool can_press, const Vec3& dir) {
+    if (b.pressed && can_press && !g_left_down) {
+        inputsim::mouse_button(0, true);
+        g_left_down = true;
         g_sticky = true;
         g_press_dir = dir;
         if (g_s.haptics) vrinput::pulse(0.01f, 0.4f);
     }
-    if (!b.down && g_mouse_down[button]) {
-        inputsim::mouse_button(button, false);
-        g_mouse_down[button] = false;
-        if (!g_mouse_down[0] && !g_mouse_down[1]) g_sticky = false;
+    if (!b.down && g_left_down) {
+        inputsim::mouse_button(0, false);
+        g_left_down = false;
+        g_sticky = false;
         g_freeze_until = now_ms() + g_s.click_freeze_ms;
         if (g_s.haptics) vrinput::pulse(0.005f, 0.2f);
     }
+}
+
+// The laser's heading, degrees: yaw to the right, pitch up.
+void yaw_pitch(const Vec3& d, double* yaw, double* pitch) {
+    *yaw = std::atan2(static_cast<double>(d.x), -static_cast<double>(d.z)) * 180.0 / kPi;
+    *pitch = std::asin(std::clamp(static_cast<double>(d.y), -1.0, 1.0)) * 180.0 / kPi;
+}
+
+// Trigger: the right mouse button (see RightButton).
+void right_button(const Frame& f, const vrinput::ButtonState& b, bool can_press, Aim aim, bool pointer_valid,
+                  const Vec3& origin, const Vec3& dir) {
+    if (b.pressed && can_press && !g_right.down) {
+        inputsim::mouse_button(1, true);
+        g_right = RightButton{};
+        g_right.down = true;
+        g_right.world = aim == Aim::World;
+        g_right.press_dir = g_right.last_dir = dir;
+        if (g_right.world) {
+            // The game may answer with its pop-up menu: watch the screen UI round the cursor from now on.
+            int x, y;
+            cursor_position(f, &x, &y);
+            screens::popup_watch((static_cast<float>(x) + 0.5f) / static_cast<float>(f.client_w),
+                                 (static_cast<float>(y) + 0.5f) / static_cast<float>(f.client_h), origin, dir);
+        }
+        if (g_s.haptics) vrinput::pulse(0.01f, 0.4f);
+    }
+    if (!g_right.down) return;
+    if (!b.down) {
+        inputsim::mouse_button(1, false);
+        if (g_right.swivel) HW2VR_LOG("controls: camera turn done");
+        else if (g_right.world) screens::popup_released();
+        g_right = RightButton{};
+        g_freeze_until = now_ms() + g_s.click_freeze_ms;
+        if (g_s.haptics) vrinput::pulse(0.005f, 0.2f);
+        return;
+    }
+    if (!g_right.world || !pointer_valid) return;
+    if (!g_right.swivel) {
+        if (dot(dir, g_right.press_dir) >= std::cos(g_s.swivel_degrees * kPi / 180.0f)) return;  // still a click
+        g_right.swivel = true;
+        g_right.last_dir = dir;  // turning starts from here: the dead zone doesn't jump the view
+        screens::popup_cancel();
+        if (g_s.haptics) vrinput::pulse(0.008f, 0.3f);
+        HW2VR_LOG("controls: trigger held and moved - turning the camera");
+        return;
+    }
+    double yaw0, pitch0, yaw1, pitch1;
+    yaw_pitch(g_right.last_dir, &yaw0, &pitch0);
+    yaw_pitch(dir, &yaw1, &pitch1);
+    g_right.last_dir = dir;
+    double dyaw = yaw1 - yaw0;
+    if (dyaw > 180.0) dyaw -= 360.0;
+    if (dyaw < -180.0) dyaw += 360.0;
+    g_right.acc[0] += dyaw * g_s.swivel_speed * (g_s.swivel_invert_x ? -1.0 : 1.0);
+    g_right.acc[1] -= (pitch1 - pitch0) * g_s.swivel_speed * (g_s.swivel_invert_y ? -1.0 : 1.0);  // laser up = mouse up
+    const int dx = static_cast<int>(g_right.acc[0]), dy = static_cast<int>(g_right.acc[1]);
+    g_right.acc[0] -= dx;
+    g_right.acc[1] -= dy;
+    inputsim::move_relative(dx, dy);
 }
 
 // Left stick: orbit by holding the right mouse button and moving the mouse, as the game's own right-drag.
@@ -279,31 +370,49 @@ void zoom(const Frame& f, const vrinput::State& st, bool allowed) {
     }
 }
 
-// HW2 orders (scripts/keybindings.lua): Move = M then a click on the spot, Attack = Ctrl+click (force attack),
-// Guard/Harvest/Repair/Special = hold G/H/Y/Z and click the target, Dock = D, Stop = S (cancel orders).
-void give_order(const Frame& f, int order) {
-    auto binding = [](const wchar_t* text) {
-        keys::Binding b;
-        keys::parse_binding(text, &b);
-        return b;
-    };
-    HW2VR_LOG("controls: order wheel -> %ls", wheel::label(order));
-    const int x = g_anchor_x, y = g_anchor_y;
-    switch (order) {
-        case wheel::kMove: macro::key_then_click(binding(L"M"), f.window, x, y); break;
-        case wheel::kAttack: macro::click_with(binding(L"Ctrl"), f.window, x, y); break;
-        case wheel::kGuard: macro::click_with(binding(L"G"), f.window, x, y); break;
-        case wheel::kHarvest: macro::click_with(binding(L"H"), f.window, x, y); break;
-        case wheel::kRepair: macro::click_with(binding(L"Y"), f.window, x, y); break;
-        case wheel::kSpecial: macro::click_with(binding(L"Z"), f.window, x, y); break;
-        case wheel::kDock: macro::tap(binding(L"D")); break;
-        case wheel::kStop: macro::tap(binding(L"S")); break;
-        default: return;  // centre: nothing
-    }
-    if (g_s.haptics) vrinput::pulse(0.015f, 0.6f);
+// The point on the laser `distance` metres from the head (the hand is nearer the head than that): menus open there,
+// centred on the laser, so they start with nothing chosen.
+Vec3 on_laser(const Vec3& head, const Vec3& origin, const Vec3& dir, float distance) {
+    const Vec3 rel = origin - head;
+    const float b = dot(dir, rel), c = dot(rel, rel) - distance * distance;
+    const float disc = b * b - c;
+    const float t = disc >= 0.0f ? std::max(0.15f, -b + std::sqrt(disc)) : 0.4f;
+    return origin + dir * t;
 }
 
-void buttons(const vrinput::State& st, bool allowed, Requests* req) {
+void open_menu(const Frame& f, const vrinput::State& st, int menu, int button, Aim aim, const Vec3& origin,
+               const Vec3& dir) {
+    const int id = menus::radial_id(menu);
+    if (id < 0) return;
+    close_menu();
+    cursor_position(f, &g_anchor_x, &g_anchor_y);
+    g_anchor_valid = aim == Aim::World;
+    const Vec3 head = position(f.hmd);
+    const Vec3 toward = st.pointer_valid ? on_laser(head, origin, dir, kMenuDistance) : head - axis_z(f.hmd);
+    radial::open(id, head, toward, kMenuDistance);
+    g_menu = menu;
+    g_menu_button = button;
+    g_menu_slice = -1;
+    if (g_s.haptics) vrinput::pulse(0.01f, 0.3f);
+    HW2VR_LOG("controls: %s menu%s", menus::name(menu), g_anchor_valid ? " (orders go to the target)" : "");
+}
+
+// Closes the open menu and runs the slice the laser is on (the centre: nothing).
+void finish_menu(const Frame& f) {
+    if (g_menu < 0) return;
+    const int menu = g_menu;
+    const int item = radial::close();
+    g_menu = g_menu_button = g_menu_slice = -1;
+    if (item < 0) {
+        HW2VR_LOG("controls: %s menu closed (nothing chosen)", menus::name(menu));
+        return;
+    }
+    if (menus::run(menu, item, f.window, g_anchor_x, g_anchor_y, g_anchor_valid) && g_s.haptics)
+        vrinput::pulse(0.015f, 0.6f);
+}
+
+void buttons(const Frame& f, const vrinput::State& st, bool allowed, bool menus_allowed, Aim aim, const Vec3& origin,
+             const Vec3& dir, Requests* req) {
     for (int i = 0; i < input::kButtonCount; ++i) {
         const vrinput::ButtonState& b = st.buttons[i];
         const keys::Binding& bind = g_s.buttons[i];
@@ -311,6 +420,7 @@ void buttons(const vrinput::State& st, bool allowed, Requests* req) {
             inputsim::keys(bind, false);
             g_held[i] = false;
         }
+        if (b.released && g_menu_button == i) finish_menu(f);  // let go over a slice: that one
         if (b.pressed) {
             char desc[32];
             keys::describe(bind, desc, sizeof desc);
@@ -321,6 +431,9 @@ void buttons(const vrinput::State& st, bool allowed, Requests* req) {
             case keys::Binding::Keys:
                 if (allowed) inputsim::keys(bind, true), g_held[i] = true;
                 break;
+            case keys::Binding::Menu:
+                if (allowed && menus_allowed) open_menu(f, st, bind.menu, i, aim, origin, dir);
+                break;
             case keys::Binding::Recentre: req->recentre = true; break;
             case keys::Binding::WorldScaleUp: ++req->world_scale_steps; break;
             case keys::Binding::WorldScaleDown: --req->world_scale_steps; break;
@@ -329,8 +442,8 @@ void buttons(const vrinput::State& st, bool allowed, Requests* req) {
     }
 }
 
-// The game's cursor image: on the panel where the game drew it, or out in the world along the ray the game picks
-// along when the laser aims into the world.
+// The game's cursor image: on the panel or a window where the game drew it, or out in the world along the ray the
+// game picks along when the laser aims into the world.
 void place_cursor(const Frame& f, Aim aim, const Vec3& eye, Vec3* world_point) {
     const hud::Cursor& c = hud::last_cursor();
     if (!c.drawn || f.client_w <= 0 || f.client_h <= 0) return g_cursor.hide();
@@ -343,7 +456,7 @@ void place_cursor(const Frame& f, Aim aim, const Vec3& eye, Vec3* world_point) {
                               pose, &metres_per_pixel))
             return g_cursor.hide();
         g_cursor.set_width(hud::kCursorSize * metres_per_pixel);
-    } else if (aim == Aim::World || aim == Aim::Tablet || aim == Aim::Wheel || !panel::shown()) {
+    } else if (aim == Aim::World || aim == Aim::Tablet || aim == Aim::Menu || !panel::shown()) {
         if (!f.game_projection) return g_cursor.hide();
         const Vec3 view = input::unproject_pixel(f.game_projection, static_cast<float>(c.x), static_cast<float>(c.y),
                                                  f.client_w, f.client_h);
@@ -369,7 +482,9 @@ void configure(const Settings& settings) { g_s = settings; }
 void start(const wchar_t* manifest_path) {
     g_started = true;
     g_dragging = g_orbiting = false;
-    g_mouse_down[0] = g_mouse_down[1] = false;
+    g_left_down = g_sticky = false;
+    g_right = RightButton{};
+    g_menu = g_menu_button = g_menu_slice = -1;
     std::fill(std::begin(g_held), std::end(g_held), false);
     g_prev_aim = Aim::None;
     g_tip_until = -1;
@@ -383,14 +498,15 @@ void start(const wchar_t* manifest_path) {
     g_bar_tex = gl::upload_bgra(g_bar_tex, bar.width, bar.height, bar.pixels.data());
     g_beam.create("hw2vr.beam", "Laser", 2, false);
     g_bar.create("hw2vr.bar", "Move the screen", 2, false);
-    g_cursor.create("hw2vr.cursor", "Cursor", 7, true);  // above every panel (the tablet is 5, the wheel 6)
+    // Above every panel: game windows 4, the tablet 5, the pop-up menu and command menus 6, a menu's highlight 7.
+    g_cursor.create("hw2vr.cursor", "Cursor", 8, true);
     g_hint.create("hw2vr.hint", "HW2 VR help", 4, false);
     g_beam.set_texture(g_beam_tex);
     g_bar.set_texture(g_bar_tex);
+    menus::register_menus();
     tablet::start();
-    wheel::start();
+    radial::start();
     screens::start();
-    g_bumper_click = false;
 
     char line[256] = {}, desc[32];
     for (int i = 0; i < input::kButtonCount; ++i) {
@@ -402,6 +518,8 @@ void start(const wchar_t* manifest_path) {
             line[0] = '\0';
         }
     }
+    HW2VR_LOG("controls: right bumper = left click, right trigger = right click (held and moved past %.1f deg: camera "
+              "turn, %.0f counts/deg)", g_s.swivel_degrees, g_s.swivel_speed);
 }
 
 void stop() {
@@ -409,7 +527,7 @@ void stop() {
     release_mouse();
     release_keys();
     macro::clear();
-    wheel::stop();
+    radial::stop();
     tablet::stop();
     screens::stop();
     vrinput::shutdown();
@@ -481,10 +599,16 @@ Requests update(const Frame& f) {
         bar_area.width += 2.0f * kBarMargin;
         bar_area.height += 2.0f * kBarMargin;
         float unused[2];
-        const bool held = g_mouse_down[0] || g_mouse_down[1];
-        if (wheel::is_open()) {
-            hit_distance = wheel::point(origin, dir);
-            aim = Aim::Wheel;
+        const bool held = g_left_down || g_right.down;
+        if (radial::is_open()) {
+            hit_distance = radial::point(origin, dir);
+            aim = Aim::Menu;
+            if (radial::selected() != g_menu_slice) {  // a tick per slice
+                g_menu_slice = radial::selected();
+                if (g_menu_slice >= 0 && g_s.haptics) vrinput::pulse(0.004f, 0.15f);
+            }
+        } else if (held && g_prev_aim == Aim::World) {
+            aim = Aim::World;  // a button held down on the world stays there (box select, camera turn)
         } else if (!held && tablet::hover(origin, dir, &hit_distance)) {
             aim = Aim::Tablet;
         } else if (screens::hit(origin, dir, &hit_distance, screen_uv)) {
@@ -492,10 +616,9 @@ Requests update(const Frame& f) {
         } else if (movable && !held && bar_area.intersect(origin, dir, unused, &bar_distance)) {
             aim = Aim::Bar;
         } else if (showing && g.intersect(origin, dir, hit_uv, &hit_distance)) {
-            // The panel is mostly see-through: it only counts where the game's UI has something. A held button
-            // keeps the mode it was pressed in (a band-select drag in the world can cross UI).
+            // The panel is mostly see-through: it only counts where the game's UI has something.
             const bool ui = panel::solid() || hud::ui_at(hit_uv[0], hit_uv[1]) != 0;
-            aim = held && g_prev_aim == Aim::World ? Aim::World : ui || held ? Aim::Panel : Aim::World;
+            aim = ui || held ? Aim::Panel : Aim::World;
         } else {
             aim = Aim::World;
         }
@@ -504,9 +627,9 @@ Requests update(const Frame& f) {
         tablet::clear_hover();
     }
 
-    // Grab bar: press the trigger on it to drag the panel; letting go saves.
-    if (!g_dragging && aim == Aim::Bar && st.left_click.pressed) start_drag(origin, dir, bar_distance);
-    if (g_dragging && (!st.left_click.down || !st.pointer_valid)) {
+    // Grab bar: hold the bumper on it to drag the panel; letting go saves.
+    if (!g_dragging && aim == Aim::Bar && st.bumper.pressed) start_drag(origin, dir, bar_distance);
+    if (g_dragging && (!st.bumper.down || !st.pointer_valid)) {
         g_dragging = false;
         panel::save();
     }
@@ -515,7 +638,7 @@ Requests update(const Frame& f) {
     g_dragging ? g_bar.set_color(1.0f, 0.6f, 0.2f) : g_bar.set_color(1.0f, 1.0f, 1.0f);
     g_beam.set_color(1.0f, g_dragging ? 0.55f : 1.0f, g_dragging ? 0.15f : 1.0f);
 
-    // Help under the bar: while on it or dragging, and a tip for the first 20 s.
+    // Help next to the bar: while on it or dragging, and a tip for the first 20 s.
     if (movable && g_tip_until < 0) g_tip_until = now_ms() + kTipMs;
     if (aim == Aim::Bar || g_dragging) g_tip_until = 0;  // found it
     set_hint(!movable ? nullptr : (aim == Aim::Bar || g_dragging) ? kBarHelp : now_ms() < g_tip_until ? kTip : nullptr);
@@ -540,15 +663,16 @@ Requests update(const Frame& f) {
                 g_cursor_depth = length(hit) / f.world_scale;
             }
         }
-    } else if (aim != Aim::Wheel) {
+    } else if (aim != Aim::Menu) {
         depth::clear_ray();
     }
 
-    // The cursor follows the laser unless the panel is being moved, the camera orbits (that drag owns the mouse), an
-    // order is being given (wheel open, or its clicks still going out) or the laser is on the tablet.
+    // The cursor follows the laser unless the panel is being moved, the camera turns (that drag owns the mouse), an
+    // order is going out (a menu open, or its clicks still being sent) or the laser is on the tablet.
     const bool busy = g_dragging;
     const bool reset = aim != g_prev_aim;
-    const bool cursor_free = foreground && !busy && !g_orbiting && !macro::busy() && aim != Aim::Wheel && aim != Aim::Tablet;
+    const bool cursor_free = foreground && !busy && !g_orbiting && !g_right.down && !macro::busy() && aim != Aim::Menu &&
+                             aim != Aim::Tablet;
     if (cursor_free) {
         if (aim == Aim::Panel) {
             aim_cursor(f, hit_uv[0] * f.client_w, hit_uv[1] * f.client_h, f.dt, reset);
@@ -564,44 +688,26 @@ Requests update(const Frame& f) {
     }
     g_prev_aim = aim;
 
-    // Trigger: on the tablet it presses the button; elsewhere it is the left mouse button.
+    // Our own panels: the bumper or the trigger presses a tablet button or picks a menu's slice.
+    const bool ui_press = foreground && (st.bumper.pressed || st.trigger.pressed);
+    if (aim == Aim::Tablet && ui_press && tablet::press() && g_s.haptics) vrinput::pulse(0.012f, 0.5f);
+    if (st.bumper.released || st.trigger.released) tablet::release();
+    if (aim == Aim::Menu && ui_press) finish_menu(f);
+
+    // The game: bumper = left button, trigger = right button.
     const bool game_aim = aim == Aim::Panel || aim == Aim::World || aim == Aim::Window;
-    if (aim == Aim::Tablet && st.left_click.pressed && foreground && tablet::press() && g_s.haptics) vrinput::pulse(0.012f, 0.5f);
-    if (st.left_click.released) tablet::release();
     const bool can_click = foreground && !busy && !g_orbiting && !macro::busy() && game_aim && inputsim::cursor_over(f.window);
-    click(st.left_click, 0, can_click, dir);
+    left_button(st.bumper, can_click && !g_right.down, dir);
+    right_button(f, st.trigger, can_click && !g_left_down, aim, st.pointer_valid, origin, dir);
 
-    // Bumper: aiming into the world it opens the order wheel on the target (let go on a slice to give that order,
-    // in the centre for nothing); on a game window it is a right click.
-    if (st.right_click.pressed && foreground && !busy && !macro::busy()) {
-        int cx = g_cursor_x, cy = g_cursor_y;
-        if (cx == INT_MIN && !inputsim::cursor_client(f.window, &cx, &cy)) cx = f.client_w / 2, cy = f.client_h / 2;
-        if (aim == Aim::World && st.pointer_valid) {
-            g_anchor_x = cx, g_anchor_y = cy;
-            wheel::open(eye, origin + dir * 5.0f);
-            if (g_s.haptics) vrinput::pulse(0.01f, 0.3f);
-        } else if (game_aim) {
-            g_bumper_click = true;
-            g_anchor_x = cx, g_anchor_y = cy;
-        }
-    }
-    if (st.right_click.released) {
-        if (wheel::is_open()) {
-            give_order(f, wheel::close());
-        } else if (g_bumper_click && foreground) {
-            macro::click_with(keys::Binding{}, f.window, g_anchor_x, g_anchor_y, 1);  // a plain right click
-        }
-        g_bumper_click = false;
-    }
+    // A held left button starts dragging once the laser has moved far enough from where it went down.
+    if (g_sticky && st.pointer_valid && dot(dir, g_press_dir) < std::cos(g_s.drag_degrees * kPi / 180.0f)) g_sticky = false;
 
-    // A held button starts dragging once the laser has moved far enough from where it went down.
-    if (g_sticky && st.pointer_valid && dot(dir, g_press_dir) < std::cos(g_s.drag_degrees * 3.14159265f / 180.0f))
-        g_sticky = false;
-
-    const bool sticks = foreground && !busy && !g_mouse_down[0] && !g_mouse_down[1] && !wheel::is_open();
-    orbit(f, st, sticks);
-    zoom(f, st, sticks);
-    buttons(st, foreground, &req);
+    const bool free_hands = foreground && !busy && !g_left_down && !radial::is_open();
+    orbit(f, st, free_hands && !g_right.down);
+    zoom(f, st, free_hands);  // also while the trigger turns the camera
+    const bool menus_allowed = !busy && !g_left_down && !g_right.down && !g_orbiting && !macro::busy();
+    buttons(f, st, foreground, menus_allowed, aim, origin, dir, &req);
 
     // Visuals: the beam ends where the laser acts.
     Vec3 world_point = origin + dir * g_s.cursor_distance;
@@ -609,11 +715,11 @@ Requests update(const Frame& f) {
     if (!st.pointer_valid) {
         g_beam.hide();
     } else {
-        const float beam_length = g_dragging                                              ? g_grab_distance
-                                  : aim == Aim::Bar                                       ? bar_distance
+        const float beam_length = g_dragging                                                       ? g_grab_distance
+                                  : aim == Aim::Bar                                                ? bar_distance
                                   : aim == Aim::Panel || aim == Aim::Tablet || aim == Aim::Window ? hit_distance
-                                  : aim == Aim::Wheel && hit_distance > 0.0f              ? hit_distance
-                                                                                          : length(world_point - origin);
+                                  : aim == Aim::Menu && hit_distance > 0.0f                       ? hit_distance
+                                                                                                   : length(world_point - origin);
         show_beam(origin, dir, beam_length, eye);
     }
     return req;

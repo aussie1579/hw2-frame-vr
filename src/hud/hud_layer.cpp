@@ -392,7 +392,7 @@ float ui_coverage(const float r[4]) {
     int covered = 0, total = 0;
     for (int y = y0; y <= y1; ++y)
         for (int x = x0; x <= x1; ++x, ++total)
-            if (g_mask[static_cast<size_t>(y) * g_mask_w + x] > 2) ++covered;
+            if (mask_covered(g_mask[static_cast<size_t>(y) * g_mask_w + x])) ++covered;
     return total ? static_cast<float>(covered) / static_cast<float>(total) : 0.0f;
 }
 
@@ -425,7 +425,13 @@ int ui_at(float u, float v) {
     if (g_mask.empty() || g_mask_w <= 0 || g_mask_h <= 0 || u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) return -1;
     const int x = std::min(static_cast<int>(u * g_mask_w), g_mask_w - 1);
     const int y = std::min(static_cast<int>((1.0f - v) * g_mask_h), g_mask_h - 1);  // mask rows are bottom-up
-    return g_mask[static_cast<size_t>(y) * g_mask_w + x] > 2 ? 1 : 0;  // any coverage in the cell (mip-averaged)
+    return mask_covered(g_mask[static_cast<size_t>(y) * g_mask_w + x]) ? 1 : 0;
+}
+
+const std::vector<unsigned char>& ui_mask(int* width, int* height) {
+    *width = g_mask_w;
+    *height = g_mask_h;
+    return g_mask;
 }
 
 namespace {

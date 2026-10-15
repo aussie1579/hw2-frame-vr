@@ -6,14 +6,18 @@
 #include "input/key_names.h"
 
 // The Tier 3 controls, once per frame on the render thread after WaitGetPoses:
-//   - right-hand laser = the mouse. On the HUD panel's UI the cursor goes to the panel spot; elsewhere the laser
-//     points into the world: where it touches the scene (stereo/depth_probe.h) the mouse goes to the pixel through
-//     which the game's camera sees that point and the cursor is drawn right there, at the ship's depth.
-//     Trigger (a light pull) = left click, bumper = right click; a press holds the cursor still until the laser
-//     moves past drag_degrees, so clicks never become tiny drags (filtered aim, haptic ticks).
+//   - right-hand laser = the mouse. On the HUD panel's UI or a game window the cursor goes to that spot; elsewhere
+//     the laser points into the world: where it touches the scene (stereo/depth_probe.h) the mouse goes to the pixel
+//     through which the game's camera sees that point and the cursor is drawn right there, at the ship's depth.
+//     Bumper = the left mouse button (select, box-drag, click); a press holds the cursor still until the laser moves
+//     past drag_degrees, so clicks never become tiny drags. Trigger (a light pull) = the right mouse button: a tap is
+//     the game's right click (its pop-up menu is shown where the laser pointed - hud/screen_windows.h); held and
+//     moved past swivel_degrees it turns the camera like the game's own right-drag. Filtered aim, haptic ticks.
 //   - left stick orbits the camera (emulated right-mouse drag), right stick up/down zooms (mouse wheel).
+//   - left D-pad, held: a command menu (input/command_menus.h) opens on the laser - let go over a slice, or click it.
 //   - every other button holds its hw2vr.ini [buttons] key(s) while held, or runs a VR action (recentre...).
-//   - movable panel layout only (shelved): the grab bar under the panel moves, resizes and curves it.
+//   - our own panels (wrist tablet, menus): the bumper or the trigger presses.
+//   - movable panel layouts only: the grab bar next to the panel moves, resizes and curves it (bumper).
 // Visuals: the beam, the game's own cursor (on the panel, or out in the world at the laser's aim), the bar and help.
 namespace hw2vr::controls {
 
@@ -26,7 +30,10 @@ struct Settings {
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;
     int click_freeze_ms = 80;       // the cursor stays put this long after a release
-    float drag_degrees = 1.5f;      // a held click starts dragging once the laser moves this far
+    float drag_degrees = 1.5f;      // a held left click starts dragging once the laser moves this far
+    float swivel_degrees = 2.0f;    // a held trigger turns the camera once the laser moves this far (else: right click)
+    float swivel_speed = 12.0f;     // mouse counts per degree the laser turns while turning the camera
+    bool swivel_invert_x = false, swivel_invert_y = false;
     double filter_min_cutoff = 1.0, filter_beta = 0.007;  // 1-euro filter on the cursor, in pixels
     bool haptics = true;
     bool show_beam = true;

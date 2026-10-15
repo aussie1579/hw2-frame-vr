@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(hw2vr VERSION 0.9.0 LANGUAGES CXX RC)
+project(hw2vr VERSION 0.10.0 LANGUAGES CXX RC)
 
 # HomeworldRM.exe is 32-bit (docs/FINDINGS.md), so the proxy must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -29,11 +29,14 @@ add_library(hw2vr_proxy SHARED
     src/hud/hud_panel.cpp
     src/hud/marker_geometry.cpp
     src/hud/screen_windows.cpp
+    src/assets/game_assets.cpp
+    src/assets/stb_image_impl.cpp
+    src/input/command_menus.cpp
     src/input/controls.cpp
     src/input/input_sim.cpp
+    src/input/radial_menu.cpp
     src/input/key_names.cpp
     src/input/macro.cpp
-    src/input/order_wheel.cpp
     src/input/sprites.cpp
     src/input/tablet.cpp
     src/input/ui_canvas.cpp
@@ -49,7 +52,7 @@ add_library(hw2vr_proxy SHARED
 )
 set_target_properties(hw2vr_proxy PROPERTIES OUTPUT_NAME opengl32)
 target_include_directories(hw2vr_proxy PRIVATE src)
-target_include_directories(hw2vr_proxy SYSTEM PRIVATE ${OPENVR_DIR}/include)
+target_include_directories(hw2vr_proxy SYSTEM PRIVATE ${OPENVR_DIR}/include ${CMAKE_SOURCE_DIR}/third_party/stb)
 target_compile_definitions(hw2vr_proxy PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_compile_options(hw2vr_proxy PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /permissive- /utf-8 /external:W0>)
 # No incremental-link thunks: exports should point straight at the stubs/hooks (overlays inline-hook them).

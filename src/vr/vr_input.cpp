@@ -13,7 +13,7 @@ namespace {
 
 bool g_ready = false;
 ::vr::VRActionSetHandle_t g_set = ::vr::k_ulInvalidActionSetHandle;
-::vr::VRActionHandle_t g_pointer = 0, g_left_hand = 0, g_left_click = 0, g_right_click = 0, g_camera = 0, g_zoom = 0, g_haptic = 0;
+::vr::VRActionHandle_t g_pointer = 0, g_left_hand = 0, g_trigger = 0, g_bumper = 0, g_camera = 0, g_zoom = 0, g_haptic = 0;
 ::vr::VRActionHandle_t g_buttons[input::kButtonCount] = {};
 State g_state;
 bool g_logged_inactive = false;
@@ -91,13 +91,13 @@ bool init(const std::wstring& manifest_path) {
     bool ok = err == ::vr::VRInputError_None;
     ok &= action("/actions/main/in/pointer", &g_pointer);
     ok &= action("/actions/main/in/left_hand", &g_left_hand);
-    ok &= action("/actions/main/in/click", &g_left_click);
-    ok &= action("/actions/main/in/rightclick", &g_right_click);
+    ok &= action("/actions/main/in/right_trigger", &g_trigger);
+    ok &= action("/actions/main/in/right_bumper", &g_bumper);
     ok &= action("/actions/main/in/camera", &g_camera);
     ok &= action("/actions/main/in/zoom", &g_zoom);
     ok &= action("/actions/main/out/haptic", &g_haptic);
     for (int i = 0; i < input::kButtonCount; ++i)
-        ok &= action(i == input::kLeftTrigger ? "/actions/main/in/left_trigger"  // analog, like the click
+        ok &= action(i == input::kLeftTrigger ? "/actions/main/in/left_trigger"  // analog, like the right trigger
                                               : (std::string("/actions/main/in/button_") + input::kButtons[i].name).c_str(),
                      &g_buttons[i]);
     if (!ok) {
@@ -139,8 +139,8 @@ const State& update() {
     g_state.left_valid = left.bActive && left.pose.bPoseIsValid;
     if (g_state.left_valid) mat4::from_rows3x4(left.pose.mDeviceToAbsoluteTracking.m, g_state.left_pose);
 
-    g_state.left_click = read_pull(g_left_click, prev.left_click, &g_state.click_pull);
-    g_state.right_click = track(read_button(g_right_click), prev.right_click);
+    g_state.trigger = read_pull(g_trigger, prev.trigger, &g_state.trigger_pull);
+    g_state.bumper = track(read_button(g_bumper), prev.bumper);
     read_vector(g_camera, g_state.camera);
     read_vector(g_zoom, g_state.zoom);
     for (int i = 0; i < input::kButtonCount; ++i) {

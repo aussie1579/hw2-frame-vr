@@ -21,6 +21,7 @@ struct Item {
     std::wstring text;
     Kind kind = Kind::Button;
     bool hover = false, pressed = false, lit = false;
+    const sprites::Image* icon = nullptr;  // a button's icon (the game's own), drawn above its text
 };
 
 // A dark rounded panel with its buttons and labels.
@@ -29,9 +30,13 @@ sprites::Image render_panel(int width, int height, const std::vector<Item>& item
 // The index of the button under (u, v), -1 if none (labels never count).
 int hit(const std::vector<Item>& items, float u, float v);
 
-// A radial menu: labels.size() slices clockwise from the top round a centre label. highlight: a slice index,
-// labels.size() for the centre, -1 for none.
-sprites::Image render_wheel(int size, const std::vector<std::wstring>& labels, const std::wstring& centre, int highlight);
+// A radial menu: labels.size() slices clockwise from the top round a centre label, each with an optional icon
+// (icons[i], may be null or the vector empty). highlight: a slice index, labels.size() for the centre, -1 for none.
+sprites::Image render_wheel(int size, const std::vector<std::wstring>& labels, const std::wstring& centre, int highlight,
+                            const std::vector<const sprites::Image*>& icons = {});
+// The highlight for one slice of an n-slice wheel, at the top (slice 0): turned round the wheel's centre to the
+// slice it marks, it lights that slice without re-drawing the wheel.
+sprites::Image render_wedge(int size, int slices);
 
 // Which part of a wheel a point is on: x right, y up, in wheel radii from its centre. The slice index, -1 for the
 // centre (inside `inner`), -2 outside the wheel.

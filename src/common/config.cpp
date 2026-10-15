@@ -100,6 +100,10 @@ Config load_config(const std::wstring& ini_path) {
     c.zoom_invert = flag(L"zoom_invert", c.zoom_invert);
     c.click_freeze_ms = static_cast<int>(GetPrivateProfileIntW(L"controls", L"click_freeze_ms", c.click_freeze_ms, ini_path.c_str()));
     c.drag_degrees = read_float(ini_path, L"controls", L"drag_degrees", c.drag_degrees);
+    c.swivel_degrees = read_float(ini_path, L"controls", L"swivel_degrees", c.swivel_degrees);
+    c.swivel_speed = read_float(ini_path, L"controls", L"swivel_speed", c.swivel_speed);
+    c.swivel_invert_x = flag(L"swivel_invert_x", c.swivel_invert_x);
+    c.swivel_invert_y = flag(L"swivel_invert_y", c.swivel_invert_y);
     c.trigger_press = read_float(ini_path, L"controls", L"trigger_press", c.trigger_press);
     c.trigger_release = read_float(ini_path, L"controls", L"trigger_release", c.trigger_release);
     c.filter_min_cutoff = read_float(ini_path, L"controls", L"filter_min_cutoff", c.filter_min_cutoff);

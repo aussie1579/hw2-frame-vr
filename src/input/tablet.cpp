@@ -1,10 +1,13 @@
 #include "input/tablet.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <iterator>
 #include <string>
 #include <vector>
 
+#include "assets/game_assets.h"
 #include "common/log.h"
 #include "common/one_euro.h"
 #include "input/key_names.h"
@@ -16,91 +19,86 @@
 namespace hw2vr::tablet {
 namespace {
 
-constexpr int kCanvasW = 640, kCanvasH = 660;
+constexpr int kCanvasW = 640, kCanvasH = 540;
 constexpr float kShowFacing = 0.55f, kHideFacing = 0.30f;  // palm-to-head cosine, with hysteresis
 constexpr float kMaxReach = 0.9f;                          // metres from the head
 
-enum class Special { None, Group, Assign };
-
 struct Def {
     const wchar_t* label;
-    const wchar_t* keys;  // input/key_names.h syntax
-    Special special = Special::None;
-};
-struct Row {
-    const wchar_t* title;  // section label on the left ("" = continues the previous)
-    std::vector<Def> buttons;
+    const wchar_t* keys;      // input/key_names.h syntax
+    assets::IconRef icon;     // the game's own taskbar icon
+    int hover_cell;           // its cell under the cursor
 };
 
-// HW2 keys (scripts/keybindings.lua): tactics F2-F4, stances F5-F7, strike-group formations Shift+F1-F9, leave
-// strike group "/", build B, research R, launch L, Sensors Manager Space, objectives O, events V, menu F10,
-// select all visible CapsLock, focus home Home, groups 1-0 (Ctrl+n assigns).
-const std::vector<Row> kRows = {
-    {L"TACTICS", {{L"Aggressive", L"F2"}, {L"Defensive", L"F3"}, {L"Passive", L"F4"}}},
-    {L"STANCE", {{L"Damage", L"F5"}, {L"Evasive", L"F6"}, {L"Neutral", L"F7"}}},
-    {L"FORMATION",
-     {{L"Phalanx", L"Shift+F1"}, {L"Line", L"Shift+F2"}, {L"Screen", L"Shift+F3"}, {L"Delta", L"Shift+F4"},
-      {L"Broad", L"Shift+F5"}}},
-    {L"", {{L"X", L"Shift+F6"}, {L"Movers", L"Shift+F7"}, {L"Wall", L"Shift+F8"}, {L"Sphere", L"Shift+F9"}, {L"Leave", L"Slash"}}},
-    {L"PRODUCE", {{L"Build", L"B"}, {L"Research", L"R"}, {L"Launch", L"L"}}},
-    {L"SCREENS", {{L"Sensors", L"Space"}, {L"Objectives", L"O"}, {L"Events", L"V"}, {L"Menu", L"F10"}}},
-    {L"GROUPS",
-     {{L"1", L"1", Special::Group}, {L"2", L"2", Special::Group}, {L"3", L"3", Special::Group},
-      {L"4", L"4", Special::Group}, {L"5", L"5", Special::Group}}},
-    {L"",
-     {{L"6", L"6", Special::Group}, {L"7", L"7", Special::Group}, {L"8", L"8", Special::Group},
-      {L"9", L"9", Special::Group}, {L"0", L"0", Special::Group}}},
-    {L"SELECT", {{L"All visible", L"CapsLock"}, {L"Home", L"Home"}, {L"Assign group", L"", Special::Assign}}},
+// HW2 keys (scripts/keybindings.lua): Sensors Manager Space, select all visible CapsLock, focus on the mothership
+// Home, in-game menu F10; groups 1-0 select, Ctrl+1-0 assign. Icons and cells as on the game's taskbar
+// (ui\newui\newtaskbar.lua).
+const Def kBig[] = {
+    {L"Sensors", L"Space", {"ui\\newui\\taskbar\\hudicons\\menu_ico_sensors4k.dds", 136, 1}, 3},
+    {L"Select all", L"CapsLock", {"ui\\newui\\taskbar\\selectall.tga", 0, 0}, 0},
+    {L"Mothership", L"Home", {"ui\\newui\\taskbar\\focuscapship.tga", 0, 0}, 0},
+    {L"Menu", L"F10", {"ui\\newui\\taskbar\\hudicons\\menu_ico_main.dds", 128, 3}, 4},
 };
+const wchar_t* const kGroups[] = {L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8", L"9", L"0"};
 
 Settings g_s;
 bool g_started = false;
 vr::Overlay g_overlay;
 gl::GLuint g_tex = 0;
 std::vector<ui::Item> g_items;
-std::vector<Def> g_defs;          // per item (labels get an empty Def)
-std::vector<keys::Binding> g_bindings;
+std::vector<keys::Binding> g_bindings;               // per item (titles and labels: none)
+std::vector<std::array<sprites::Image, 2>> g_icons;  // per item: normal, hover (empty: no icon)
 bool g_dirty = true, g_visible = false;
 int g_hover = -1, g_pressed = -1;
-bool g_assign = false;
 input::PanelGeometry g_geometry;
 OneEuroFilter g_fx, g_fy, g_fz;
 
+void add(const ui::Rect& r, const wchar_t* text, ui::Kind kind, const wchar_t* keys = L"", const assets::IconRef& icon = {},
+         int hover_cell = 0) {
+    g_items.push_back({r, text, kind});
+    keys::Binding b;
+    if (keys[0] && !keys::parse_binding(keys, &b)) HW2VR_LOG("tablet: bad key '%ls'", keys);
+    g_bindings.push_back(b);
+    assets::IconRef hover = icon;
+    hover.cell = hover_cell;
+    g_icons.push_back({assets::load_icon(icon), assets::load_icon(hover)});
+}
+
 void build_layout() {
     g_items.clear();
-    g_defs.clear();
     g_bindings.clear();
-    const float top = 0.09f, bottom = 0.975f, gap = 0.012f;
-    const float row_h = (bottom - top) / static_cast<float>(kRows.size());
-    g_items.push_back({{0.04f, 0.015f, 0.96f, 0.075f}, L"FLEET COMMAND", ui::Kind::Title});
-    g_defs.push_back({});
-    g_bindings.push_back({});
-    for (size_t r = 0; r < kRows.size(); ++r) {
-        const float y0 = top + r * row_h + gap * 0.5f, y1 = top + (r + 1) * row_h - gap * 0.5f;
-        if (kRows[r].title[0]) {
-            g_items.push_back({{0.04f, y0, 0.21f, y1}, kRows[r].title, ui::Kind::Label});
-            g_defs.push_back({});
-            g_bindings.push_back({});
-        }
-        const float x0 = 0.22f, x1 = 0.96f, n = static_cast<float>(kRows[r].buttons.size());
-        const float w = (x1 - x0) / n;
-        for (size_t b = 0; b < kRows[r].buttons.size(); ++b) {
-            const Def& d = kRows[r].buttons[b];
-            g_items.push_back({{x0 + b * w + gap * 0.5f, y0, x0 + (b + 1) * w - gap * 0.5f, y1}, d.label, ui::Kind::Button});
-            g_defs.push_back(d);
-            keys::Binding binding;
-            if (d.keys[0] && !keys::parse_binding(d.keys, &binding)) HW2VR_LOG("tablet: bad key '%ls'", d.keys);
-            g_bindings.push_back(binding);
-        }
+    g_icons.clear();
+    constexpr float x0 = 0.04f, x1 = 0.96f, gap = 0.016f;
+    add({x0, 0.015f, x1, 0.075f}, L"FLEET COMMAND", ui::Kind::Title);
+    const float big_w = (x1 - x0) / static_cast<float>(std::size(kBig));
+    for (size_t i = 0; i < std::size(kBig); ++i)
+        add({x0 + static_cast<float>(i) * big_w + gap / 2, 0.09f, x0 + static_cast<float>(i + 1) * big_w - gap / 2, 0.44f},
+            kBig[i].label, ui::Kind::Button, kBig[i].keys, kBig[i].icon, kBig[i].hover_cell);
+    add({x0, 0.465f, x1, 0.525f}, L"GROUPS", ui::Kind::Title);
+    const float group_w = (x1 - x0) / 5.0f;
+    for (int i = 0; i < 10; ++i) {
+        const int row = i / 5, col = i % 5;
+        const float y0 = row ? 0.655f : 0.535f, y1 = row ? 0.765f : 0.645f;
+        add({x0 + static_cast<float>(col) * group_w + gap / 2, y0, x0 + static_cast<float>(col + 1) * group_w - gap / 2, y1},
+            kGroups[i], ui::Kind::Button, kGroups[i]);
+    }
+    add({x0, 0.79f, x1, 0.875f}, L"Hold the D-pad:  ▲ Orders   ◀ Tactics   ▶ Formations   ▼ Fleet",
+        ui::Kind::Label);
+    add({x0, 0.885f, x1, 0.97f}, L"Hold the left bumper and press a group to assign the selection", ui::Kind::Label);
+}
+
+void refresh_items() {
+    for (size_t i = 0; i < g_items.size(); ++i) {
+        const bool hover = static_cast<int>(i) == g_hover;
+        g_items[i].hover = hover;
+        g_items[i].pressed = static_cast<int>(i) == g_pressed;
+        const sprites::Image& icon = g_icons[i][hover && g_icons[i][1].width > 0 ? 1 : 0];
+        g_items[i].icon = icon.width > 0 ? &icon : nullptr;
     }
 }
 
 void redraw() {
-    for (size_t i = 0; i < g_items.size(); ++i) {
-        g_items[i].hover = static_cast<int>(i) == g_hover;
-        g_items[i].pressed = static_cast<int>(i) == g_pressed;
-        g_items[i].lit = g_defs[i].special == Special::Assign && g_assign;
-    }
+    refresh_items();
     const sprites::Image img = ui::render_panel(kCanvasW, kCanvasH, g_items);
     g_tex = gl::upload_bgra(g_tex, img.width, img.height, img.pixels.data());
     g_overlay.set_texture(g_tex);
@@ -122,24 +120,21 @@ Vec3 palm_normal(const float pose[16]) {
 
 void configure(const Settings& settings) { g_s = settings; }
 
-sprites::Image test_render(int hover, bool assign) {
+sprites::Image test_render(int hover) {
     build_layout();
-    g_hover = -1;
+    g_hover = g_pressed = -1;
     for (size_t i = 0, buttons = 0; i < g_items.size(); ++i)
         if (g_items[i].kind == ui::Kind::Button && static_cast<int>(buttons++) == hover) g_hover = static_cast<int>(i);
-    g_assign = assign;
-    for (size_t i = 0; i < g_items.size(); ++i) {
-        g_items[i].hover = static_cast<int>(i) == g_hover;
-        g_items[i].lit = g_defs[i].special == Special::Assign && g_assign;
-    }
-    return ui::render_panel(kCanvasW, kCanvasH, g_items);
+    refresh_items();
+    const sprites::Image img = ui::render_panel(kCanvasW, kCanvasH, g_items);
+    g_hover = -1;
+    return img;
 }
 
 void start() {
     g_started = true;
     g_visible = false;
     g_hover = g_pressed = -1;
-    g_assign = false;
     build_layout();
     g_overlay.create("hw2vr.tablet", "Fleet command", 5, false);
     g_overlay.set_width(g_s.width);
@@ -227,22 +222,11 @@ bool press() {
     if (g_hover < 0) return false;
     g_pressed = g_hover;
     g_dirty = true;
-    const Def& d = g_defs[g_hover];
-    keys::Binding b = g_bindings[g_hover];
-    if (d.special == Special::Assign) {
-        g_assign = !g_assign;
-    } else if (d.special == Special::Group && g_assign) {
-        // Ctrl + the digit assigns the selection to that group.
-        keys::Binding ctrl;
-        keys::parse_binding((std::wstring(L"Ctrl+") + d.keys).c_str(), &ctrl);
-        macro::tap(ctrl);
-        g_assign = false;
-    } else {
-        macro::tap(b);
-    }
+    const keys::Binding& b = g_bindings[g_hover];
+    macro::tap(b);
     char desc[32];
-    keys::describe(d.special == Special::Assign ? keys::Binding{} : b, desc, sizeof desc);
-    HW2VR_LOG("tablet: %ls -> %s", d.label, d.special == Special::Assign ? (g_assign ? "assign on" : "assign off") : desc);
+    keys::describe(b, desc, sizeof desc);
+    HW2VR_LOG("tablet: %ls -> %s", g_items[g_hover].text.c_str(), desc);
     return true;
 }
 

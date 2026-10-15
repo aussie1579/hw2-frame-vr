@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 // The game draws its HUD into its own framebuffer (fbo 35 on build 12653478), cleared to (0,0,0,1) and blended so
 // alpha holds *transmittance*; the final composite lays it over the scene (docs/FINDINGS.md "Render passes").
 // That layer mixes two kinds of draw:
@@ -47,6 +49,10 @@ int ui_at(float u, float v);
 // Fraction (0..1) of a screen rectangle {u0, v0, u1, v1} (top-left origin) that has screen UI on it, from the same
 // mask; -1 = no mask yet. Tells whether a game window (build manager, a menu) is open.
 float ui_coverage(const float rect[4]);
+// The mask itself, for spotting UI that newly appears (the right-click menu): one byte per 8x8-pixel cell, rows
+// bottom-up; mask_covered(byte) = UI there. Empty (0 x 0) until the first readback.
+const std::vector<unsigned char>& ui_mask(int* width, int* height);
+inline bool mask_covered(unsigned char cell) { return cell > 2; }  // any coverage in the cell (mip-averaged)
 // A rectangle of this frame's screen UI {u0, v0, u1, v1} (top-left origin) copied at native resolution into crop
 // texture `slot` (0..3); returns it with its size, 0 if there's no overlay. Call after the frame's draws.
 unsigned crop_texture(int slot, const float rect[4], int* width, int* height);

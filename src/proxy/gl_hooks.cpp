@@ -27,8 +27,9 @@
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
 #include "hud/marker_geometry.h"
+#include "input/command_menus.h"
+#include "input/radial_menu.h"
 #include "input/tablet.h"
-#include "input/ui_canvas.h"
 #include "proxy/engine_hooks.h"
 #include "proxy/gl_api.h"
 #include "proxy/gl_record_hooks.h"
@@ -397,7 +398,8 @@ extern "C" __declspec(dllexport) unsigned hw2vr_test_crop(float u0, float v0, fl
     const float r[4] = {u0, v0, u1, v1};
     return hw2vr::hud::crop_texture(0, r, w, h);
 }
-// The VR panels' images (tablet, order wheel) as raw files {int width, int height, BGRA rows top-down} in `dir`.
+// The VR panels' images (tablet, the D-pad's command menus) as raw files {int width, int height, BGRA rows top-down}
+// in `dir`. Returns how many were written.
 extern "C" __declspec(dllexport) int hw2vr_test_render_ui(const wchar_t* dir) {
     auto save = [&](const wchar_t* name, const hw2vr::sprites::Image& img) {
         FILE* f = nullptr;
@@ -408,12 +410,17 @@ extern "C" __declspec(dllexport) int hw2vr_test_render_ui(const wchar_t* dir) {
         std::fclose(f);
         return true;
     };
-    const std::vector<std::wstring> orders = {L"Move", L"Attack", L"Guard", L"Dock", L"Stop", L"Repair", L"Harvest", L"Special"};
     int ok = 0;
-    ok += save(L"ui_tablet.raw", hw2vr::tablet::test_render(-1, false));
-    ok += save(L"ui_tablet_hover.raw", hw2vr::tablet::test_render(4, true));
-    ok += save(L"ui_wheel.raw", hw2vr::ui::render_wheel(512, orders, L"cancel", -1));
-    ok += save(L"ui_wheel_attack.raw", hw2vr::ui::render_wheel(512, orders, L"cancel", 1));
+    ok += save(L"ui_tablet.raw", hw2vr::tablet::test_render(-1));
+    ok += save(L"ui_tablet_hover.raw", hw2vr::tablet::test_render(1));
+    hw2vr::menus::register_menus();
+    for (int m = 0; m < hw2vr::menus::kMenuCount; ++m) {
+        hw2vr::sprites::Image img;
+        if (!hw2vr::radial::test_render(hw2vr::menus::radial_id(m), m == 0 ? 2 : -1, &img.pixels, &img.width)) continue;
+        img.height = img.width;
+        const std::string name = std::string("ui_menu_") + hw2vr::menus::name(m) + ".raw";
+        ok += save(std::wstring(name.begin(), name.end()).c_str(), img);
+    }
     return ok;
 }
 // The marker depth grid on its own: the scene framebuffer seen with the game's camera (identity eye), then the

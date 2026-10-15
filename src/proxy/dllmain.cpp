@@ -74,6 +74,10 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     c.zoom_invert = cfg.zoom_invert;
     c.click_freeze_ms = cfg.click_freeze_ms;
     c.drag_degrees = cfg.drag_degrees;
+    c.swivel_degrees = cfg.swivel_degrees;
+    c.swivel_speed = cfg.swivel_speed;
+    c.swivel_invert_x = cfg.swivel_invert_x;
+    c.swivel_invert_y = cfg.swivel_invert_y;
     hw2vr::vrinput::set_trigger_thresholds(cfg.trigger_press, cfg.trigger_release);
     c.filter_min_cutoff = cfg.filter_min_cutoff;
     c.filter_beta = cfg.filter_beta;

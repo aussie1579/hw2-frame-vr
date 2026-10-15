@@ -7,10 +7,12 @@
 //   - status: the resource readout (top-right of the screen), above the wrist tablet while it's up;
 //   - manager: the build / research / launch window (a column down the screen's right side) while it's open,
 //     pinned in the room where the tablet was (or front-left), so the hand can drop;
+//   - popup: the game's right-click menu - UI that turns up next to the cursor after a right click in the world -
+//     shown where the laser pointed, the click spot under the laser, until it closes;
 //   - modal: when a menu or dialog covers the middle of the screen (front end, Esc menu, save/load), the whole
 //     screen UI is shown on the front panel (hud/hud_panel.h) until it closes.
-// Open/closed comes from how much of each screen region the UI covers (hud::ui_coverage). Clicks on a window go to
-// the game at the matching screen pixel.
+// Open/closed comes from how much of each screen region the UI covers (hud::ui_coverage / hud::ui_mask). Clicks on a
+// window go to the game at the matching screen pixel.
 namespace hw2vr::screens {
 
 struct Settings {
@@ -30,6 +32,14 @@ void before_swap();
 // After WaitGetPoses: place the visible windows (status strip on the tablet, manager where it was pinned).
 void update(const float hmd_pose[16]);
 bool modal_open();
+
+// The right-click menu. watch: the right button went down on the world at screen uv (u, v), the laser along
+// origin/dir - UI appearing near there from now on is the menu. cancel: the press became a camera turn.
+// released: the button is up; if nothing has appeared within a moment, the watch ends.
+void popup_watch(float u, float v, const Vec3& origin, const Vec3& dir);
+void popup_cancel();
+void popup_released();
+bool popup_open();
 
 // The laser on a visible window: distance along the ray and the screen uv (top-left origin) it points at.
 bool hit(const Vec3& origin, const Vec3& dir, float* distance, float screen_uv[2]);

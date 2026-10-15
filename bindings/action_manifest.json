@@ -15,16 +15,16 @@
       "type": "pose"
     },
     {
-      "name": "/actions/main/in/click",
+      "name": "/actions/main/in/right_trigger",
       "type": "vector1"
+    },
+    {
+      "name": "/actions/main/in/right_bumper",
+      "type": "boolean"
     },
     {
       "name": "/actions/main/in/left_trigger",
       "type": "vector1"
-    },
-    {
-      "name": "/actions/main/in/rightclick",
-      "type": "boolean"
     },
     {
       "name": "/actions/main/in/camera",
@@ -103,25 +103,25 @@
       "/actions/main": "Homeworld 2 VR",
       "/actions/main/in/pointer": "Laser pointer (mouse cursor)",
       "/actions/main/in/left_hand": "Left hand (the wrist tablet: palm towards you)",
-      "/actions/main/in/click": "Left click: trigger pull (select, drag, grab the console bar)",
+      "/actions/main/in/right_trigger": "Right mouse button: trigger pull (tap = right click, hold and move = turn the camera)",
+      "/actions/main/in/right_bumper": "Left mouse button (select, drag, click; presses VR buttons and menu slices)",
       "/actions/main/in/left_trigger": "Hotkey: Left trigger pull (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/rightclick": "Order wheel (aiming into the world) / right click (on a game window)",
       "/actions/main/in/camera": "Camera orbit (right-mouse drag)",
       "/actions/main/in/zoom": "Mouse wheel (zoom)",
       "/actions/main/out/haptic": "Click haptic",
-      "/actions/main/in/button_a": "Hotkey: A (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_b": "Hotkey: B (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_x": "Hotkey: X (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_y": "Hotkey: Y (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_menu": "Hotkey: Menu (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_view": "Hotkey: View (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_dpad_up": "Hotkey: D-pad up (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_dpad_down": "Hotkey: D-pad down (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_dpad_left": "Hotkey: D-pad left (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_dpad_right": "Hotkey: D-pad right (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_left_bumper": "Hotkey: Left bumper (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_left_stick": "Hotkey: Left stick click (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/button_right_stick": "Hotkey: Right stick click (key set in hw2vr.ini [buttons])"
+      "/actions/main/in/button_a": "Hotkey: A (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_b": "Hotkey: B (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_x": "Hotkey: X (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_y": "Hotkey: Y (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_menu": "Hotkey: Menu (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_view": "Hotkey: View (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_dpad_up": "Hotkey: D-pad up (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_dpad_down": "Hotkey: D-pad down (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_dpad_left": "Hotkey: D-pad left (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_dpad_right": "Hotkey: D-pad right (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_left_bumper": "Hotkey: Left bumper (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_left_stick": "Hotkey: Left stick click (key or menu set in hw2vr.ini [buttons])",
+      "/actions/main/in/button_right_stick": "Hotkey: Right stick click (key or menu set in hw2vr.ini [buttons])"
     }
   ]
 }

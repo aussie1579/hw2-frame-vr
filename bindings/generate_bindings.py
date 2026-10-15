@@ -1,11 +1,12 @@
 """Regenerates the SteamVR action manifest and the Steam Frame default binding. Run: python -I bindings/generate_bindings.py
 
-Right hand = the pointer: the laser is the cursor, trigger = left click, bumper = right click, stick up/down = mouse
-wheel (zoom), A/B/X/Y = the orders you give to what you point at. Left hand = camera, modifiers and production:
-stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad = build/research/launch/stop.
+Right hand = the pointer: the laser is the cursor, trigger = the right mouse button (a tap is the game's right click,
+held and moved it turns the camera), bumper = the left mouse button, stick up/down = mouse wheel (zoom), A/B/X/Y =
+the orders you give to what you point at. Left hand = camera, modifiers and the command menus: stick orbits the
+camera, trigger = Shift, bumper = Ctrl, D-pad (held) = the orders / tactics / formations / fleet menus.
 Both triggers are analog (their pull, not SteamVR's full-press click): the proxy treats a light pull as a press
-(hw2vr.ini [controls] trigger_press). Every other button is a "hotkey" action whose key is set in hw2vr.ini [buttons],
-and everything can be rebound in SteamVR's binding UI.
+(hw2vr.ini [controls] trigger_press). Every other button is a "hotkey" action whose key (or menu) is set in hw2vr.ini
+[buttons], and everything can be rebound in SteamVR's binding UI.
 
 Input paths come from SteamVR's drivers/frame_controller/resources/input/frame_controller_profile.json (right hand
 has A/B/X/Y and Menu, left hand has the D-pad and View). Grips are deliberately unbound: SteamVR's compositor uses
@@ -28,9 +29,9 @@ BUTTONS = {
 actions = [
     {"name": "/actions/main/in/pointer", "type": "pose"},
     {"name": "/actions/main/in/left_hand", "type": "pose"},
-    {"name": "/actions/main/in/click", "type": "vector1"},
+    {"name": "/actions/main/in/right_trigger", "type": "vector1"},
+    {"name": "/actions/main/in/right_bumper", "type": "boolean"},
     {"name": "/actions/main/in/left_trigger", "type": "vector1"},
-    {"name": "/actions/main/in/rightclick", "type": "boolean"},
     {"name": "/actions/main/in/camera", "type": "vector2"},
     {"name": "/actions/main/in/zoom", "type": "vector2"},
 ] + [{"name": f"/actions/main/in/button_{b}", "type": "boolean"} for b in BUTTONS] + [
@@ -42,15 +43,15 @@ localization = {
     "/actions/main": "Homeworld 2 VR",
     "/actions/main/in/pointer": "Laser pointer (mouse cursor)",
     "/actions/main/in/left_hand": "Left hand (the wrist tablet: palm towards you)",
-    "/actions/main/in/click": "Left click: trigger pull (select, drag, grab the console bar)",
+    "/actions/main/in/right_trigger": "Right mouse button: trigger pull (tap = right click, hold and move = turn the camera)",
+    "/actions/main/in/right_bumper": "Left mouse button (select, drag, click; presses VR buttons and menu slices)",
     "/actions/main/in/left_trigger": "Hotkey: Left trigger pull (key set in hw2vr.ini [buttons])",
-    "/actions/main/in/rightclick": "Order wheel (aiming into the world) / right click (on a game window)",
     "/actions/main/in/camera": "Camera orbit (right-mouse drag)",
     "/actions/main/in/zoom": "Mouse wheel (zoom)",
     "/actions/main/out/haptic": "Click haptic",
 }
 for b, label in BUTTONS.items():
-    localization[f"/actions/main/in/button_{b}"] = f"Hotkey: {label} (key set in hw2vr.ini [buttons])"
+    localization[f"/actions/main/in/button_{b}"] = f"Hotkey: {label} (key or menu set in hw2vr.ini [buttons])"
 
 manifest = {
     "default_bindings": [{"controller_type": "frame_controller", "binding_url": "bindings_frame_controller.json"}],
@@ -77,8 +78,8 @@ def stick(path, position, click):
 
 
 frame_sources = [
-    pull(f"{R}/trigger", "click"),
-    button(f"{R}/bumper", "rightclick"),
+    pull(f"{R}/trigger", "right_trigger"),
+    button(f"{R}/bumper", "right_bumper"),
     stick(f"{R}/thumbstick", "zoom", "button_right_stick"),
     stick(f"{L}/thumbstick", "camera", "button_left_stick"),
     button(f"{R}/a", "button_a"), button(f"{R}/b", "button_b"),
@@ -92,9 +93,10 @@ frame = {
     "action_manifest_version": 0,
     "controller_type": "frame_controller",
     "name": "HW2 Frame VR default (Steam Frame)",
-    "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = order wheel, stick = zoom, "
-                   "A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, "
-                   "bumper = Ctrl, D-pad = build / research / launch / stop, View = tactical overlay.",
+    "description": "Right hand = pointer: laser aims, bumper = left click, trigger (light pull) = right click - hold "
+                   "and move to turn the camera, stick = zoom, A move, B cancel, X focus, Y Sensors Manager. Left hand: "
+                   "stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad (hold) = orders / tactics / "
+                   "formations / fleet menus, View = tactical overlay.",
     "bindings": {"/actions/main": {
         "poses": [{"output": "/actions/main/in/pointer", "path": "/user/hand/right/pose/tip"},
                   {"output": "/actions/main/in/left_hand", "path": "/user/hand/left/pose/openxr_grip"}],

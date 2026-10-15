@@ -56,6 +56,10 @@ struct Config {
     bool zoom_invert = false;
     int click_freeze_ms = 80;
     float drag_degrees = 1.5f;     // a held click starts dragging once the laser moves this far
+    float swivel_degrees = 2.0f;   // a held trigger turns the camera once the laser moves this far (else: right click)
+    float swivel_speed = 12.0f;    // mouse counts per degree the laser turns, while turning the camera
+    bool swivel_invert_x = false;
+    bool swivel_invert_y = false;
     float trigger_press = 0.25f;   // trigger pull (0..1) that counts as a press
     float trigger_release = 0.15f; // ... and as let go again
     float filter_min_cutoff = 1.0f, filter_beta = 0.007f;

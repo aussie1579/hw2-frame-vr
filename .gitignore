@@ -22,3 +22,6 @@ re/
 
 # Local Claude Code settings
 .claude/settings.local.json
+
+# Python bytecode
+__pycache__/

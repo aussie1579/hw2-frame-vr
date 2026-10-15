@@ -599,7 +599,7 @@ void ui_render_test(HMODULE proxy) {
     std::wstring dir(exe);
     dir = dir.substr(0, dir.find_last_of(L"\\/"));
     const int written = render ? render(dir.c_str()) : 0;
-    check(written == 4, "tablet and order wheel images render (ui_*.raw next to the smoke test)");
+    check(written == 6, "tablet and command menu images render (ui_*.raw next to the smoke test)");
 }
 
 void ui_phase_signature_test(HMODULE proxy) {

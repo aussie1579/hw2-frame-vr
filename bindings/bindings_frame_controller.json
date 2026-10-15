@@ -2,7 +2,7 @@
   "action_manifest_version": 0,
   "controller_type": "frame_controller",
   "name": "HW2 Frame VR default (Steam Frame)",
-  "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = order wheel, stick = zoom, A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad = build / research / launch / stop, View = tactical overlay.",
+  "description": "Right hand = pointer: laser aims, bumper = left click, trigger (light pull) = right click - hold and move to turn the camera, stick = zoom, A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad (hold) = orders / tactics / formations / fleet menus, View = tactical overlay.",
   "bindings": {
     "/actions/main": {
       "poses": [
@@ -27,7 +27,7 @@
           "mode": "trigger",
           "inputs": {
             "pull": {
-              "output": "/actions/main/in/click"
+              "output": "/actions/main/in/right_trigger"
             }
           }
         },
@@ -36,7 +36,7 @@
           "mode": "button",
           "inputs": {
             "click": {
-              "output": "/actions/main/in/rightclick"
+              "output": "/actions/main/in/right_bumper"
             }
           }
         },

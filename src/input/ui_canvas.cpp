@@ -14,11 +14,11 @@ struct Rgba {
     float r, g, b, a;
 };
 
-// Homeworld-ish palette: dark blue-grey glass, steel-blue buttons, amber for "on".
-constexpr Rgba kBackground{18, 24, 32, 0.86f}, kEdge{90, 120, 150, 0.9f};
-constexpr Rgba kButton{38, 56, 74, 0.95f}, kHover{62, 104, 146, 0.97f}, kPressed{96, 160, 214, 1.0f};
-constexpr Rgba kLit{196, 138, 40, 0.97f}, kButtonEdge{110, 150, 190, 0.9f};
-constexpr Rgba kText{236, 242, 248, 1.0f}, kLabelText{150, 180, 205, 1.0f}, kTitleText{240, 170, 70, 1.0f};
+// The game's own look (ui\newui styles): dark glass, teal outlines (OUTLINECOLOR 124,200,196), warm titles.
+constexpr Rgba kBackground{8, 14, 18, 0.88f}, kEdge{124, 200, 196, 0.85f};
+constexpr Rgba kButton{20, 34, 40, 0.94f}, kHover{30, 78, 86, 0.97f}, kPressed{60, 150, 150, 1.0f};
+constexpr Rgba kLit{196, 138, 40, 0.97f}, kButtonEdge{124, 200, 196, 0.75f};
+constexpr Rgba kText{236, 242, 240, 1.0f}, kLabelText{150, 196, 192, 1.0f}, kTitleText{255, 255, 230, 1.0f};
 
 // Straight-alpha "over" into a pixel stored as 0xAARRGGBB.
 void blend(unsigned& dst, const Rgba& c, float coverage) {
@@ -56,6 +56,32 @@ void fill_rounded(sprites::Image& img, float x0, float y0, float x1, float y1, f
             unsigned& px = img.pixels[static_cast<size_t>(y) * img.width + x];
             blend(px, fill, inside);
             if (edge_width > 0.0f) blend(px, edge, inside * std::clamp(edge_width + 0.5f + d, 0.0f, 1.0f));
+        }
+}
+
+// An image scaled (bilinear) into a pixel rectangle, keeping its aspect, centred.
+void draw_image(sprites::Image& img, const sprites::Image& src, float x0, float y0, float x1, float y1, float opacity = 1.0f) {
+    if (src.width <= 0 || src.height <= 0 || x1 <= x0 || y1 <= y0) return;
+    const float scale = std::min((x1 - x0) / src.width, (y1 - y0) / src.height);
+    const float w = src.width * scale, h = src.height * scale;
+    const float ox = 0.5f * (x0 + x1 - w), oy = 0.5f * (y0 + y1 - h);
+    const int ix0 = std::max(0, static_cast<int>(ox)), ix1 = std::min(img.width, static_cast<int>(ox + w) + 1);
+    const int iy0 = std::max(0, static_cast<int>(oy)), iy1 = std::min(img.height, static_cast<int>(oy + h) + 1);
+    auto texel = [&](int x, int y, int c) {
+        x = std::clamp(x, 0, src.width - 1), y = std::clamp(y, 0, src.height - 1);
+        return static_cast<float>((src.pixels[static_cast<size_t>(y) * src.width + x] >> (8 * c)) & 0xFF);
+    };
+    for (int y = iy0; y < iy1; ++y)
+        for (int x = ix0; x < ix1; ++x) {
+            const float sx = (x + 0.5f - ox) / scale - 0.5f, sy = (y + 0.5f - oy) / scale - 0.5f;
+            if (sx < -0.5f || sy < -0.5f || sx > src.width - 0.5f || sy > src.height - 0.5f) continue;
+            const int tx = static_cast<int>(std::floor(sx)), ty = static_cast<int>(std::floor(sy));
+            const float fx = sx - tx, fy = sy - ty;
+            float c[4];
+            for (int k = 0; k < 4; ++k)
+                c[k] = (texel(tx, ty, k) * (1 - fx) + texel(tx + 1, ty, k) * fx) * (1 - fy) +
+                       (texel(tx, ty + 1, k) * (1 - fx) + texel(tx + 1, ty + 1, k) * fx) * fy;
+            blend(img.pixels[static_cast<size_t>(y) * img.width + x], Rgba{c[2], c[1], c[0], c[3] / 255.0f}, opacity);
         }
 }
 
@@ -137,14 +163,44 @@ sprites::Image render_panel(int width, int height, const std::vector<Item>& item
         const int font = std::max(10, static_cast<int>((y1 - y0) * size));
         if (it.kind == Kind::Button) {
             const Rgba& fill = it.pressed ? kPressed : it.lit ? kLit : it.hover ? kHover : kButton;
-            fill_rounded(img, x0, y0, x1, y1, 0.22f * (y1 - y0), fill, kButtonEdge, it.hover ? 2.0f : 1.0f);
-            text.draw(img, it.text, static_cast<int>(x0) + 2, static_cast<int>(y0), static_cast<int>(x1) - 2,
-                      static_cast<int>(y1), font, true, kText);
+            fill_rounded(img, x0, y0, x1, y1, 0.16f * std::min(y1 - y0, x1 - x0), fill, kButtonEdge, it.hover ? 2.0f : 1.0f);
+            if (it.icon) {  // icon above, text under it
+                const float pad = 0.08f * (y1 - y0), text_h = it.text.empty() ? 0.0f : 0.28f * (y1 - y0);
+                draw_image(img, *it.icon, x0 + pad, y0 + pad, x1 - pad, y1 - pad - text_h);
+                if (!it.text.empty())
+                    text.draw(img, it.text, static_cast<int>(x0) + 2, static_cast<int>(y1 - pad - text_h),
+                              static_cast<int>(x1) - 2, static_cast<int>(y1 - pad * 0.5f),
+                              std::max(10, static_cast<int>(text_h * 0.55f)), true, kText);
+            } else {
+                text.draw(img, it.text, static_cast<int>(x0) + 2, static_cast<int>(y0), static_cast<int>(x1) - 2,
+                          static_cast<int>(y1), font, true, kText);
+            }
         } else {
             text.draw(img, it.text, static_cast<int>(x0), static_cast<int>(y0), static_cast<int>(x1), static_cast<int>(y1),
                       font, it.kind == Kind::Title, it.kind == Kind::Title ? kTitleText : kLabelText, DT_LEFT);
         }
     }
+    return img;
+}
+
+sprites::Image render_wedge(int size, int slices) {
+    sprites::Image img{size, size, std::vector<unsigned>(static_cast<size_t>(size) * size, 0u)};
+    const float half = 0.5f * size, step = 2.0f * kPi / std::max(slices, 1);
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            const float dx = (x + 0.5f - half) / half, dy = (half - (y + 0.5f)) / half;
+            const float r = std::sqrt(dx * dx + dy * dy);
+            if (r > 0.99f || r < kWheelInner) continue;
+            const float angle = std::atan2(dx, dy);  // 0 at the top
+            const float from_edge = 0.5f * step - std::fabs(angle);
+            if (from_edge <= 0.0f) continue;
+            const float cov = std::clamp(from_edge * r * half - 1.5f, 0.0f, 1.0f) * std::clamp((0.985f - r) * half, 0.0f, 1.0f) *
+                              std::clamp((r - kWheelInner) * half, 0.0f, 1.0f);
+            unsigned& px = img.pixels[static_cast<size_t>(y) * size + x];
+            blend(px, Rgba{124, 200, 196, 0.38f}, cov);
+            const float rim = std::clamp(1.0f - std::fabs(r - 0.97f) * half * 0.3f, 0.0f, 1.0f);
+            blend(px, Rgba{220, 255, 250, 0.9f}, rim * cov);
+        }
     return img;
 }
 
@@ -164,7 +220,8 @@ int wheel_slice(float x, float y, int slices, float inner) {
     return static_cast<int>(std::floor((angle + 0.5f * step) / step)) % slices;
 }
 
-sprites::Image render_wheel(int size, const std::vector<std::wstring>& labels, const std::wstring& centre, int highlight) {
+sprites::Image render_wheel(int size, const std::vector<std::wstring>& labels, const std::wstring& centre, int highlight,
+                            const std::vector<const sprites::Image*>& icons) {
     sprites::Image img{size, size, std::vector<unsigned>(static_cast<size_t>(size) * size, 0u)};
     const int n = static_cast<int>(labels.size());
     const float half = 0.5f * size, step = 2.0f * kPi / std::max(n, 1);
@@ -196,12 +253,22 @@ sprites::Image render_wheel(int size, const std::vector<std::wstring>& labels, c
         }
     TextLayer text(size, size);
     const float label_r = 0.5f * (kWheelInner + 0.985f) * half;
-    const int font = std::max(12, static_cast<int>(size * 0.055f));
+    const int font = std::max(12, static_cast<int>(size * (n > 8 ? 0.042f : 0.05f)));
+    const float slice_w = std::min(2.0f * label_r * std::sin(0.5f * step), size * 0.3f);  // chord at the label radius
     for (int i = 0; i < n; ++i) {
         const float a = i * step;
-        const int cx = static_cast<int>(half + std::sin(a) * label_r), cy = static_cast<int>(half - std::cos(a) * label_r);
-        const int w = static_cast<int>(size * 0.26f), h = font * 2;
-        text.draw(img, labels[i], cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, font, true, kText);
+        const float cx = half + std::sin(a) * label_r, cy = half - std::cos(a) * label_r;
+        const sprites::Image* icon = i < static_cast<int>(icons.size()) ? icons[i] : nullptr;
+        const int w = static_cast<int>(slice_w * 0.95f);
+        if (icon) {  // icon in the slice, its name under it
+            const float s = std::min(slice_w * 0.62f, (0.985f - kWheelInner) * half * 0.62f);
+            draw_image(img, *icon, cx - s * 0.5f, cy - s * 0.62f, cx + s * 0.5f, cy + s * 0.38f);
+            text.draw(img, labels[i], static_cast<int>(cx) - w / 2, static_cast<int>(cy + s * 0.38f),
+                      static_cast<int>(cx) + w / 2, static_cast<int>(cy + s * 0.38f) + font + font / 2, font, true, kText);
+        } else {
+            text.draw(img, labels[i], static_cast<int>(cx) - w / 2, static_cast<int>(cy) - font, static_cast<int>(cx) + w / 2,
+                      static_cast<int>(cy) + font, font, true, kText);
+        }
     }
     const int cw = static_cast<int>(size * 0.4f);
     text.draw(img, centre, static_cast<int>(half) - cw / 2, static_cast<int>(half) - font, static_cast<int>(half) + cw / 2,

@@ -5,10 +5,12 @@
 #include "input/sprites.h"
 #include "vr/vr_input.h"
 
-// The wrist tablet: turn the left palm towards your face and a panel of big buttons appears above it - tactics,
-// stances, strike-group formations, production and view screens, control groups. Pointed at with the right-hand
-// laser; the trigger presses a button, which sends the game's own hotkey. Our own panel (input/ui_canvas.h),
-// not a copy of the game's UI; the game's resource readout is shown above it (hud/screen_windows.h).
+// The wrist tablet: turn the left palm towards your face and a small panel appears above it - four big buttons with
+// the game's own taskbar icons (Sensors Manager, select all, focus on the mothership, main menu), the control groups
+// 1-0 (hold the left bumper - Ctrl - to assign one) and a reminder of the D-pad's command menus
+// (input/command_menus.h). Pointed at with the right-hand laser; the bumper (or the trigger) presses a button, which
+// sends the game's own hotkey. Our own panel (input/ui_canvas.h); the game's resource readout is shown above it
+// (hud/screen_windows.h).
 namespace hw2vr::tablet {
 
 struct Settings {
@@ -31,11 +33,11 @@ const input::PanelGeometry& geometry();
 // The laser on the tablet: highlights the button under it; false (and no highlight) if it misses the tablet.
 bool hover(const Vec3& origin, const Vec3& dir, float* distance);
 void clear_hover();
-// The trigger pressed / released while hovering. press() runs the button's action (true if it hit a button).
+// A button pressed / released while hovering. press() sends the button's hotkey (true if it hit a button).
 bool press();
 void release();
 
-// Tests: the tablet's image with the hover-th button highlighted (-1 none) and Assign lit or not.
-sprites::Image test_render(int hover, bool assign);
+// Tests: the tablet's image with the hover-th button highlighted (-1 none).
+sprites::Image test_render(int hover);
 
 }  // namespace hw2vr::tablet

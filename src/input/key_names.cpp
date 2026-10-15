@@ -8,6 +8,8 @@
 #include <cwctype>
 #include <string>
 
+#include "input/command_menus.h"
+
 namespace hw2vr::keys {
 namespace {
 
@@ -79,6 +81,13 @@ bool parse_binding(const wchar_t* text, Binding* out) {
     }
     if (_wcsicmp(t.c_str(), L"world_scale_up") == 0) return out->kind = Binding::WorldScaleUp, true;
     if (_wcsicmp(t.c_str(), L"world_scale_down") == 0) return out->kind = Binding::WorldScaleDown, true;
+    if (_wcsnicmp(t.c_str(), L"menu:", 5) == 0) {
+        const int menu = menus::parse(trim(t.substr(5)).c_str());
+        if (menu < 0) return false;
+        out->kind = Binding::Menu;
+        out->menu = menu;
+        return true;
+    }
     size_t start = 0;
     while (start <= t.size()) {
         const size_t plus = t.find(L'+', start);
@@ -102,6 +111,7 @@ void describe(const Binding& b, char* out, int size) {
         case Binding::Recentre: std::snprintf(out, size, "recentre"); return;
         case Binding::WorldScaleUp: std::snprintf(out, size, "world_scale_up"); return;
         case Binding::WorldScaleDown: std::snprintf(out, size, "world_scale_down"); return;
+        case Binding::Menu: std::snprintf(out, size, "menu:%s", menus::name(b.menu)); return;
         case Binding::Keys: break;
     }
     out[0] = '\0';

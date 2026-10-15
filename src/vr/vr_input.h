@@ -18,8 +18,9 @@ struct State {
     float pointer_pose[16];  // right-hand laser ("tip" pose), seated space, column-major; aims down -Z
     bool left_valid = false;
     float left_pose[16];     // left hand, OpenXR grip convention: +X out of the palm, -Z along the fingers
-    ButtonState left_click, right_click;  // left_click: the right trigger's pull past trigger_press
-    float click_pull = 0.0f;              // the right trigger, 0..1
+    ButtonState trigger, bumper;  // right hand: trigger = its pull past trigger_press (the right mouse button),
+                                  // bumper = the left mouse button
+    float trigger_pull = 0.0f;    // the right trigger, 0..1
     float camera[2] = {}, zoom[2] = {};  // left and right stick, -1..1
     ButtonState buttons[input::kButtonCount];
 };
@@ -31,7 +32,8 @@ bool ready();
 // Once per frame after WaitGetPoses: the pointer pose is predicted for the frame being rendered next.
 const State& update();
 void pulse(float seconds, float amplitude);  // right-hand haptic tick
-// Trigger pulls (right = left click, left = its hotkey) count as pressed from `press` (0..1) until back below `release`.
+// Trigger pulls (right = right mouse button, left = its hotkey) count as pressed from `press` (0..1) until back below
+// `release`.
 void set_trigger_thresholds(float press, float release);
 
 }  // namespace hw2vr::vrinput
