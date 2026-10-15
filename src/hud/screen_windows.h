@@ -6,7 +6,8 @@
 // (so it's as sharp as the headset allows) rather than squeezing the whole 3440-pixel screen into view:
 //   - status: the resource readout (top-right of the screen), above the wrist tablet while it's up;
 //   - manager: the build / research / launch window (a column down the screen's right side) while it's open,
-//     pinned in the room where the tablet was (or front-left), so the hand can drop;
+//     pinned in the room where the tablet was (or front-left), so the hand can drop; a Close tab on top of it
+//     (the game's window has no close button of its own);
 //   - popup: the game's right-click menu - UI that turns up next to the cursor after a right click in the world -
 //     shown where the laser pointed, the click spot under the laser, until it closes;
 //   - modal: when a menu or dialog covers the middle of the screen (front end, Esc menu, save/load), the whole
@@ -40,6 +41,12 @@ void popup_watch(float u, float v, const Vec3& origin, const Vec3& dir);
 void popup_cancel();
 void popup_released();
 bool popup_open();
+
+// The manager window's Close tab: the laser on it highlights it (false if it misses or isn't shown); a press closes
+// the window (menus::close_manager).
+bool close_hover(const Vec3& origin, const Vec3& dir, float* distance);
+void close_clear_hover();
+bool close_press();
 
 // The laser on a visible window: distance along the ray and the screen uv (top-left origin) it points at.
 bool hit(const Vec3& origin, const Vec3& dir, float* distance, float screen_uv[2]);

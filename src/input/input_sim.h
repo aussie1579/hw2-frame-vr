@@ -15,8 +15,11 @@ bool cursor_over(HWND game);                     // the window under the cursor 
 void set_cursor_client(HWND game, int x, int y); // client pixels
 bool cursor_client(HWND game, int* x, int* y);   // where the cursor is now, client pixels
 void move_relative(int dx, int dy);              // raw mouse counts (subject to the user's mouse speed setting)
-void mouse_button(int button, bool down);        // 0 = left, 1 = right
+void mouse_button(int button, bool down);        // 0 = left, 1 = right, 2 = middle
 void wheel(int notches);                         // positive = away from the user (HW2: zoom in)
 void keys(const keys::Binding& combo, bool down);  // down: in order; up: reverse order; one SendInput each
+// Brings the game window to the front (after the SteamVR dashboard or another program took the focus) - only on the
+// player's own controller input. True if it is the foreground window afterwards.
+bool bring_to_front(HWND game);
 
 }  // namespace hw2vr::inputsim

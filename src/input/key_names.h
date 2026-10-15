@@ -5,15 +5,16 @@
 //         Home, End, PageUp, PageDown, Insert, Delete, Pause, NumLock, Numpad0-Numpad9, LBracket, RBracket, Slash,
 //         Minus, Equals, Comma, Period, Apostrophe, Semicolon, Backslash, Grave.
 //   Combos (buttons only): "Ctrl+A", "Alt+1", "Ctrl+Shift+E" - pressed in order, released in reverse.
-//   VR actions (buttons only): recentre, world_scale_up, world_scale_down, and the D-pad's command menus
-//   menu:orders, menu:tactics, menu:formations, menu:production (input/command_menus.h). "none" or empty = unbound.
+//   VR actions (buttons only): recentre, world_scale_up, world_scale_down, middle_click (the middle mouse button: the
+//   game's focus on what the cursor is on), and the D-pad's command menus menu:orders, menu:tactics,
+//   menu:formations, menu:production (input/command_menus.h). "none" or empty = unbound.
 namespace hw2vr::keys {
 
 int parse_key(const wchar_t* name);  // virtual-key code, 0 if unknown
 const char* key_name(int vk);        // for logs; "?" if unknown
 
 struct Binding {
-    enum Kind { None, Keys, Recentre, WorldScaleUp, WorldScaleDown, Menu } kind = None;
+    enum Kind { None, Keys, Recentre, WorldScaleUp, WorldScaleDown, Menu, MiddleClick } kind = None;
     int count = 0;
     unsigned char vk[4] = {};
     int menu = -1;  // Menu: menus::Id

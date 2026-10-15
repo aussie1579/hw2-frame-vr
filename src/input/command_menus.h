@@ -23,4 +23,8 @@ int radial_id(int menu);  // the menu's radial:: id, -1 before register_menus()
 bool run(int menu, int item, HWND window, int x, int y, bool target);
 const wchar_t* label(int menu, int item);
 
+// The build / research / launch window share one place on the screen: the one opened last (from the fleet menu)
+// is closed by its own toggle key (the window's Close tab, hud/screen_windows.h).
+void close_manager();
+
 }  // namespace hw2vr::menus

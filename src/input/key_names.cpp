@@ -81,6 +81,9 @@ bool parse_binding(const wchar_t* text, Binding* out) {
     }
     if (_wcsicmp(t.c_str(), L"world_scale_up") == 0) return out->kind = Binding::WorldScaleUp, true;
     if (_wcsicmp(t.c_str(), L"world_scale_down") == 0) return out->kind = Binding::WorldScaleDown, true;
+    if (_wcsicmp(t.c_str(), L"middle_click") == 0 || _wcsicmp(t.c_str(), L"middleclick") == 0 ||
+        _wcsicmp(t.c_str(), L"mouse3") == 0)
+        return out->kind = Binding::MiddleClick, true;
     if (_wcsnicmp(t.c_str(), L"menu:", 5) == 0) {
         const int menu = menus::parse(trim(t.substr(5)).c_str());
         if (menu < 0) return false;
@@ -112,6 +115,7 @@ void describe(const Binding& b, char* out, int size) {
         case Binding::WorldScaleUp: std::snprintf(out, size, "world_scale_up"); return;
         case Binding::WorldScaleDown: std::snprintf(out, size, "world_scale_down"); return;
         case Binding::Menu: std::snprintf(out, size, "menu:%s", menus::name(b.menu)); return;
+        case Binding::MiddleClick: std::snprintf(out, size, "middle_click"); return;
         case Binding::Keys: break;
     }
     out[0] = '\0';

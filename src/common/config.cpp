@@ -117,7 +117,12 @@ Config load_config(const std::wstring& ini_path) {
         GetPrivateProfileStringW(L"buttons", input::kButtons[i].ini_key, input::kButtons[i].default_keys, buf,
                                  static_cast<DWORD>(std::size(buf)), ini_path.c_str());
         c.buttons[i] = buf;
+        const std::wstring hold_key = std::wstring(input::kButtons[i].ini_key) + L"_hold";
+        GetPrivateProfileStringW(L"buttons", hold_key.c_str(), input::kButtons[i].default_hold, buf,
+                                 static_cast<DWORD>(std::size(buf)), ini_path.c_str());
+        c.holds[i] = buf;
     }
+    c.hold_ms = static_cast<int>(GetPrivateProfileIntW(L"buttons", L"hold_ms", c.hold_ms, ini_path.c_str()));
 
     c.key_vr_toggle = read_key(ini_path, L"vr_toggle", c.key_vr_toggle);
     c.key_recentre = read_key(ini_path, L"recentre", c.key_recentre);

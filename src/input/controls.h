@@ -15,7 +15,11 @@
 //     moved past swivel_degrees it turns the camera like the game's own right-drag. Filtered aim, haptic ticks.
 //   - left stick orbits the camera (emulated right-mouse drag), right stick up/down zooms (mouse wheel).
 //   - left D-pad, held: a command menu (input/command_menus.h) opens on the laser - let go over a slice, or click it.
-//   - every other button holds its hw2vr.ini [buttons] key(s) while held, or runs a VR action (recentre...).
+//     A neighbouring direction pressed with it (a diagonal) is ignored.
+//   - every other button holds its hw2vr.ini [buttons] key(s) while held, or runs a VR action (recentre, the middle
+//     mouse button...). A button with a <button>_hold action runs that once held hold_ms, its own on a short press
+//     (right stick: click = middle click - the game's focus on what the laser is on -, hold = recentre).
+//   - a controller press while the game window is in the background (after the SteamVR dashboard) brings it back.
 //   - our own panels (wrist tablet, menus): the bumper or the trigger presses.
 //   - movable panel layouts only: the grab bar next to the panel moves, resizes and curves it (bumper).
 // Visuals: the beam, the game's own cursor (on the panel, or out in the world at the laser's aim), the bar and help.
@@ -23,6 +27,8 @@ namespace hw2vr::controls {
 
 struct Settings {
     keys::Binding buttons[input::kButtonCount];
+    keys::Binding holds[input::kButtonCount];  // held hold_ms: this instead (None = the button's binding as usual)
+    int hold_ms = 600;
     float stick_deadzone = 0.2f;
     float camera_speed = 450.0f;   // mouse counts per second at full stick (right-drag orbit)
     float camera_curve = 2.0f;     // stick response exponent: 1 = linear, 2 = gentle near the centre

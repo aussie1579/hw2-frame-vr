@@ -13,6 +13,7 @@ struct ButtonInfo {
     const char* name;            // action suffix and ini key
     const wchar_t* ini_key;
     const wchar_t* default_keys;  // see input/key_names.h for the syntax
+    const wchar_t* default_hold = L"";  // [buttons] <ini_key>_hold: held hold_ms instead (then the key above taps on release)
 };
 
 // Defaults (Steam Frame, after headset test 9). Right hand points: trigger = right mouse button, bumper = left (both
@@ -32,7 +33,8 @@ inline constexpr ButtonInfo kButtons[kButtonCount] = {
     {"left_trigger", L"left_trigger", L"Shift"},  // add to selection; move orders: up/down (held, light pull)
     {"left_bumper", L"left_bumper", L"Ctrl"},     // force attack; Ctrl+number assigns groups
     {"left_stick", L"left_stick", L"Home"},       // focus on the mothership
-    {"right_stick", L"right_stick", L"recentre"}, // recentre the view (VR action, not a key)
+    {"right_stick", L"right_stick", L"middle_click", L"recentre"},  // click: focus on what the laser is on (the
+                                                                     // game's middle click); hold: recentre the view
 };
 
 }  // namespace hw2vr::input

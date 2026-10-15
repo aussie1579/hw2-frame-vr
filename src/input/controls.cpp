@@ -36,6 +36,7 @@ constexpr float kBarGap = 0.05f, kBarMargin = 0.02f;
 constexpr float kEdgeMargin = 0.02f;      // world aim stays this fraction inside the window (no edge panning)
 constexpr long long kTipMs = 20000;
 constexpr float kMenuDistance = 0.6f;     // metres from the head: a command menu opens there, on the laser
+constexpr long long kChordMs = 300;       // a second D-pad direction this soon after the first is a diagonal
 // While dragging the panel by its bar, at full stick:
 constexpr float kPushSpeed = 1.0f;   // metres per second along the laser
 constexpr float kSizeSpeed = 0.6f;   // fraction of the width per second
@@ -55,9 +56,9 @@ const wchar_t* const kBarHelp =
     L"Right stick left / right:  flatter / more curved\n"
     L"Right stick click:  flat, or curved round you";
 
-// What the laser is on, in priority order: an open command menu, the wrist tablet, a game window (pop-up menu,
-// status strip, build/research/launch), the grab bar, the panel showing the game's screen UI, the world.
-enum class Aim { None, Panel, World, Bar, Tablet, Window, Menu };
+// What the laser is on, in priority order: an open command menu, the wrist tablet, a game window's Close tab, a game
+// window (pop-up menu, status strip, build/research/launch), the grab bar, the panel showing the screen UI, the world.
+enum class Aim { None, Panel, World, Bar, Tablet, Button, Window, Menu };
 
 Settings g_s;
 bool g_started = false;
@@ -97,9 +98,13 @@ double g_orbit_rate[2] = {};  // eased towards the stick's rate, so the view nev
 // The D-pad's command menus: the open one, the button holding it open and the target its orders apply to (the
 // cursor when it opened, valid if the laser was on the world).
 int g_menu = -1, g_menu_button = -1, g_menu_slice = -1;
+long long g_menu_opened_at = 0;
 int g_anchor_x = 0, g_anchor_y = 0;
 bool g_anchor_valid = false;
-bool g_held[input::kButtonCount] = {};
+bool g_held[input::kButtonCount] = {};        // a held binding (keys, middle button) is down for this button
+bool g_down_seen[input::kButtonCount] = {};   // the press was seen (holds are timed from it)
+long long g_pressed_at[input::kButtonCount] = {};
+bool g_hold_fired[input::kButtonCount] = {};
 
 bool g_dragging = false;
 float g_grab_distance = 0.0f;
@@ -144,9 +149,15 @@ void release_mouse() {
     if (g_orbiting) inputsim::mouse_button(1, false), g_orbiting = false;
 }
 
+void release_binding(int i) {
+    if (!g_held[i]) return;
+    if (g_s.buttons[i].kind == keys::Binding::MiddleClick) inputsim::mouse_button(2, false);
+    else inputsim::keys(g_s.buttons[i], false);
+    g_held[i] = false;
+}
+
 void release_keys() {
-    for (int i = 0; i < input::kButtonCount; ++i)
-        if (g_held[i]) inputsim::keys(g_s.buttons[i], false), g_held[i] = false;
+    for (int i = 0; i < input::kButtonCount; ++i) release_binding(i);
 }
 
 void show_beam(const Vec3& origin, const Vec3& dir, float length, const Vec3& eye) {
@@ -393,6 +404,7 @@ void open_menu(const Frame& f, const vrinput::State& st, int menu, int button, A
     g_menu = menu;
     g_menu_button = button;
     g_menu_slice = -1;
+    g_menu_opened_at = now_ms();
     if (g_s.haptics) vrinput::pulse(0.01f, 0.3f);
     HW2VR_LOG("controls: %s menu%s", menus::name(menu), g_anchor_valid ? " (orders go to the target)" : "");
 }
@@ -411,34 +423,94 @@ void finish_menu(const Frame& f) {
         vrinput::pulse(0.015f, 0.6f);
 }
 
-void buttons(const Frame& f, const vrinput::State& st, bool allowed, bool menus_allowed, Aim aim, const Vec3& origin,
-             const Vec3& dir, Requests* req) {
+struct ButtonContext {
+    const Frame& f;
+    const vrinput::State& st;
+    bool allowed;            // the game is in the foreground
+    const char* menu_block;  // why a command menu can't open now (nullptr: it can)
+    Aim aim;
+    Vec3 origin, dir;
+    Requests* req;
+};
+
+// Runs a binding. tap: a short press of a button that has a hold action - sent at its release as a quick press and
+// release; otherwise keys and the middle button stay down while the controller button is held.
+void run_binding(const ButtonContext& c, int i, const keys::Binding& bind, bool tap) {
+    switch (bind.kind) {
+        case keys::Binding::Keys:
+            if (!c.allowed) break;
+            if (tap) macro::tap(bind);
+            else inputsim::keys(bind, true), g_held[i] = true;
+            break;
+        case keys::Binding::MiddleClick:
+            if (!c.allowed) break;
+            if (tap) {
+                int x, y;
+                cursor_position(c.f, &x, &y);
+                macro::click_with(keys::Binding{}, c.f.window, x, y, 2);
+            } else {
+                inputsim::mouse_button(2, true);
+                g_held[i] = true;
+            }
+            break;
+        case keys::Binding::Menu: {
+            if (!c.allowed) break;
+            // A neighbouring D-pad direction pressed with the first (the pad rocked into a diagonal): keep the first.
+            if (g_menu >= 0 && g_menu_button >= 0 && g_menu_button != i && c.st.buttons[g_menu_button].down &&
+                now_ms() - g_menu_opened_at < kChordMs) {
+                HW2VR_LOG("controls: %s ignored - pressed with %s (a diagonal)", input::kButtons[i].name,
+                          input::kButtons[g_menu_button].name);
+                break;
+            }
+            if (c.menu_block) {
+                HW2VR_LOG("controls: %s menu not opened - %s", menus::name(bind.menu), c.menu_block);
+                break;
+            }
+            open_menu(c.f, c.st, bind.menu, i, c.aim, c.origin, c.dir);
+            break;
+        }
+        case keys::Binding::Recentre: c.req->recentre = true; break;
+        case keys::Binding::WorldScaleUp: ++c.req->world_scale_steps; break;
+        case keys::Binding::WorldScaleDown: --c.req->world_scale_steps; break;
+        case keys::Binding::None: break;
+    }
+}
+
+void buttons(const ButtonContext& c) {
+    const long long now = now_ms();
     for (int i = 0; i < input::kButtonCount; ++i) {
-        const vrinput::ButtonState& b = st.buttons[i];
+        const vrinput::ButtonState& b = c.st.buttons[i];
         const keys::Binding& bind = g_s.buttons[i];
-        if (g_held[i] && (!b.down || !allowed)) {
-            inputsim::keys(bind, false);
-            g_held[i] = false;
-        }
-        if (b.released && g_menu_button == i) finish_menu(f);  // let go over a slice: that one
+        const keys::Binding& hold = g_s.holds[i];
+        if (g_held[i] && (!b.down || !c.allowed)) release_binding(i);
+        if (b.released && g_menu_button == i) finish_menu(c.f);  // let go over a slice: that one
         if (b.pressed) {
-            char desc[32];
+            char desc[32], hold_desc[32];
             keys::describe(bind, desc, sizeof desc);
-            HW2VR_LOG("controls: %s pressed -> %s", input::kButtons[i].name, desc);
+            keys::describe(hold, hold_desc, sizeof hold_desc);
+            HW2VR_LOG("controls: %s pressed -> %s%s%s", input::kButtons[i].name, desc,
+                      hold.kind != keys::Binding::None ? " (held: " : "", hold.kind != keys::Binding::None ? hold_desc : "");
+            g_down_seen[i] = true;
+            g_pressed_at[i] = now;
+            g_hold_fired[i] = false;
         }
-        if (!b.pressed || (g_dragging && i == input::kRightStick)) continue;  // stick click curves the panel then
-        switch (bind.kind) {
-            case keys::Binding::Keys:
-                if (allowed) inputsim::keys(bind, true), g_held[i] = true;
-                break;
-            case keys::Binding::Menu:
-                if (allowed && menus_allowed) open_menu(f, st, bind.menu, i, aim, origin, dir);
-                break;
-            case keys::Binding::Recentre: req->recentre = true; break;
-            case keys::Binding::WorldScaleUp: ++req->world_scale_steps; break;
-            case keys::Binding::WorldScaleDown: --req->world_scale_steps; break;
-            case keys::Binding::None: break;
+        const bool seen = g_down_seen[i];
+        if (!b.down) g_down_seen[i] = false;
+        if (g_dragging && i == input::kRightStick) continue;  // the stick click curves the panel then
+        if (hold.kind != keys::Binding::None) {
+            // Held long enough: the hold action, once. Let go sooner: the button's own action, as a tap.
+            if (seen && b.down && !g_hold_fired[i] && now - g_pressed_at[i] >= g_s.hold_ms) {
+                g_hold_fired[i] = true;
+                char desc[32];
+                keys::describe(hold, desc, sizeof desc);
+                HW2VR_LOG("controls: %s held -> %s", input::kButtons[i].name, desc);
+                if (g_s.haptics) vrinput::pulse(0.02f, 0.5f);
+                run_binding(c, i, hold, true);
+            }
+            if (seen && b.released && !g_hold_fired[i]) run_binding(c, i, bind, true);
+            continue;
         }
+        if (b.pressed) run_binding(c, i, bind, false);
     }
 }
 
@@ -456,7 +528,7 @@ void place_cursor(const Frame& f, Aim aim, const Vec3& eye, Vec3* world_point) {
                               pose, &metres_per_pixel))
             return g_cursor.hide();
         g_cursor.set_width(hud::kCursorSize * metres_per_pixel);
-    } else if (aim == Aim::World || aim == Aim::Tablet || aim == Aim::Menu || !panel::shown()) {
+    } else if (aim == Aim::World || aim == Aim::Tablet || aim == Aim::Button || aim == Aim::Menu || !panel::shown()) {
         if (!f.game_projection) return g_cursor.hide();
         const Vec3 view = input::unproject_pixel(f.game_projection, static_cast<float>(c.x), static_cast<float>(c.y),
                                                  f.client_w, f.client_h);
@@ -486,6 +558,8 @@ void start(const wchar_t* manifest_path) {
     g_right = RightButton{};
     g_menu = g_menu_button = g_menu_slice = -1;
     std::fill(std::begin(g_held), std::end(g_held), false);
+    std::fill(std::begin(g_down_seen), std::end(g_down_seen), false);
+    std::fill(std::begin(g_hold_fired), std::end(g_hold_fired), false);
     g_prev_aim = Aim::None;
     g_tip_until = -1;
     g_hint_text = nullptr;
@@ -508,11 +582,14 @@ void start(const wchar_t* manifest_path) {
     radial::start();
     screens::start();
 
-    char line[256] = {}, desc[32];
+    char line[320] = {}, desc[32], hold[32];
     for (int i = 0; i < input::kButtonCount; ++i) {
         keys::describe(g_s.buttons[i], desc, sizeof desc);
+        keys::describe(g_s.holds[i], hold, sizeof hold);
         const size_t len = std::strlen(line);
-        std::snprintf(line + len, sizeof line - len, "%s%s=%s", i ? ", " : "", input::kButtons[i].name, desc);
+        std::snprintf(line + len, sizeof line - len, "%s%s=%s%s%s", i ? ", " : "", input::kButtons[i].name, desc,
+                      g_s.holds[i].kind != keys::Binding::None ? "/hold:" : "",
+                      g_s.holds[i].kind != keys::Binding::None ? hold : "");
         if (i == input::kButtonCount / 2 - 1 || i == input::kButtonCount - 1) {
             HW2VR_LOG("controls: buttons %s", line);
             line[0] = '\0';
@@ -563,13 +640,25 @@ Requests update(const Frame& f) {
         g_logged_window = true;
     }
     const Vec3 eye = position(f.hmd);
-    const bool foreground = inputsim::game_foreground();
+    bool foreground = inputsim::game_foreground();
+    if (!foreground) {
+        // The player pressing something means they want the game back (the SteamVR dashboard or another program
+        // took the focus): bring it to the front.
+        bool pressed = st.trigger.pressed || st.bumper.pressed;
+        for (const vrinput::ButtonState& b : st.buttons) pressed |= b.pressed;
+        if (pressed) {
+            foreground = inputsim::bring_to_front(f.window);
+            HW2VR_LOG("controls: controller pressed with the game in the background - %s",
+                      foreground ? "brought the game back to the front" : "couldn't bring it to the front (click the game window)");
+        }
+    }
     if (!foreground) {
         if (!g_logged_foreground) HW2VR_LOG("controls: the game window is not in the foreground - input paused");
         g_logged_foreground = true;
         release_mouse();
         release_keys();
     } else {
+        if (g_logged_foreground) HW2VR_LOG("controls: the game window is in the foreground again");
         g_logged_foreground = false;
     }
 
@@ -611,6 +700,8 @@ Requests update(const Frame& f) {
             aim = Aim::World;  // a button held down on the world stays there (box select, camera turn)
         } else if (!held && tablet::hover(origin, dir, &hit_distance)) {
             aim = Aim::Tablet;
+        } else if (!held && screens::close_hover(origin, dir, &hit_distance)) {
+            aim = Aim::Button;
         } else if (screens::hit(origin, dir, &hit_distance, screen_uv)) {
             aim = Aim::Window;
         } else if (movable && !held && bar_area.intersect(origin, dir, unused, &bar_distance)) {
@@ -623,8 +714,10 @@ Requests update(const Frame& f) {
             aim = Aim::World;
         }
         if (aim != Aim::Tablet) tablet::clear_hover();
+        if (aim != Aim::Button) screens::close_clear_hover();
     } else {
         tablet::clear_hover();
+        screens::close_clear_hover();
     }
 
     // Grab bar: hold the bumper on it to drag the panel; letting go saves.
@@ -636,7 +729,8 @@ Requests update(const Frame& f) {
     if (g_dragging) drag_panel(st, origin, dir, static_cast<float>(f.dt));
     g_bar.set_alpha(g_dragging || aim == Aim::Bar ? 1.0f : 0.35f);
     g_dragging ? g_bar.set_color(1.0f, 0.6f, 0.2f) : g_bar.set_color(1.0f, 1.0f, 1.0f);
-    g_beam.set_color(1.0f, g_dragging ? 0.55f : 1.0f, g_dragging ? 0.15f : 1.0f);
+    if (!foreground) g_beam.set_color(0.45f, 0.45f, 0.45f);  // input paused: the game isn't in the foreground
+    else g_beam.set_color(1.0f, g_dragging ? 0.55f : 1.0f, g_dragging ? 0.15f : 1.0f);
 
     // Help next to the bar: while on it or dragging, and a tip for the first 20 s.
     if (movable && g_tip_until < 0) g_tip_until = now_ms() + kTipMs;
@@ -672,7 +766,7 @@ Requests update(const Frame& f) {
     const bool busy = g_dragging;
     const bool reset = aim != g_prev_aim;
     const bool cursor_free = foreground && !busy && !g_orbiting && !g_right.down && !macro::busy() && aim != Aim::Menu &&
-                             aim != Aim::Tablet;
+                             aim != Aim::Tablet && aim != Aim::Button;
     if (cursor_free) {
         if (aim == Aim::Panel) {
             aim_cursor(f, hit_uv[0] * f.client_w, hit_uv[1] * f.client_h, f.dt, reset);
@@ -691,6 +785,7 @@ Requests update(const Frame& f) {
     // Our own panels: the bumper or the trigger presses a tablet button or picks a menu's slice.
     const bool ui_press = foreground && (st.bumper.pressed || st.trigger.pressed);
     if (aim == Aim::Tablet && ui_press && tablet::press() && g_s.haptics) vrinput::pulse(0.012f, 0.5f);
+    if (aim == Aim::Button && ui_press && screens::close_press() && g_s.haptics) vrinput::pulse(0.012f, 0.5f);
     if (st.bumper.released || st.trigger.released) tablet::release();
     if (aim == Aim::Menu && ui_press) finish_menu(f);
 
@@ -706,8 +801,13 @@ Requests update(const Frame& f) {
     const bool free_hands = foreground && !busy && !g_left_down && !radial::is_open();
     orbit(f, st, free_hands && !g_right.down);
     zoom(f, st, free_hands);  // also while the trigger turns the camera
-    const bool menus_allowed = !busy && !g_left_down && !g_right.down && !g_orbiting && !macro::busy();
-    buttons(f, st, foreground, menus_allowed, aim, origin, dir, &req);
+    const char* menu_block = busy             ? "the panel is being moved"
+                             : g_left_down      ? "the left mouse button (bumper) is held"
+                             : g_right.down     ? "the right mouse button (trigger) is held"
+                             : g_orbiting       ? "the camera is orbiting (left stick)"
+                             : macro::busy()    ? "keys are still going out"
+                                                : nullptr;
+    buttons(ButtonContext{f, st, foreground, menu_block, aim, origin, dir, &req});
 
     // Visuals: the beam ends where the laser acts.
     Vec3 world_point = origin + dir * g_s.cursor_distance;
@@ -717,7 +817,8 @@ Requests update(const Frame& f) {
     } else {
         const float beam_length = g_dragging                                                       ? g_grab_distance
                                   : aim == Aim::Bar                                                ? bar_distance
-                                  : aim == Aim::Panel || aim == Aim::Tablet || aim == Aim::Window ? hit_distance
+                                  : aim == Aim::Panel || aim == Aim::Tablet || aim == Aim::Window ||
+                                            aim == Aim::Button                                     ? hit_distance
                                   : aim == Aim::Menu && hit_distance > 0.0f                       ? hit_distance
                                                                                                    : length(world_point - origin);
         show_beam(origin, dir, beam_length, eye);

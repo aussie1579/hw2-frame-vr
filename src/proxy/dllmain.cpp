@@ -78,6 +78,7 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     c.swivel_speed = cfg.swivel_speed;
     c.swivel_invert_x = cfg.swivel_invert_x;
     c.swivel_invert_y = cfg.swivel_invert_y;
+    c.hold_ms = cfg.hold_ms;
     hw2vr::vrinput::set_trigger_thresholds(cfg.trigger_press, cfg.trigger_release);
     c.filter_min_cutoff = cfg.filter_min_cutoff;
     c.filter_beta = cfg.filter_beta;
@@ -88,6 +89,15 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
         if (!hw2vr::keys::parse_binding(cfg.buttons[i].c_str(), &c.buttons[i]))
             HW2VR_LOG("config: [buttons] %ls = '%ls' has an unknown key name - unbound", hw2vr::input::kButtons[i].ini_key,
                       cfg.buttons[i].c_str());
+        if (!hw2vr::keys::parse_binding(cfg.holds[i].c_str(), &c.holds[i]))
+            HW2VR_LOG("config: [buttons] %ls_hold = '%ls' has an unknown key name - unbound",
+                      hw2vr::input::kButtons[i].ini_key, cfg.holds[i].c_str());
+        if (c.holds[i].kind == hw2vr::keys::Binding::Menu || (c.holds[i].kind != hw2vr::keys::Binding::None &&
+                                                              c.buttons[i].kind == hw2vr::keys::Binding::Menu)) {
+            HW2VR_LOG("config: [buttons] %ls: a command menu needs the button held - its _hold action is ignored",
+                      hw2vr::input::kButtons[i].ini_key);
+            c.holds[i] = hw2vr::keys::Binding{};
+        }
     }
     hw2vr::controls::configure(c);
 }

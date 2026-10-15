@@ -10,7 +10,7 @@
 namespace hw2vr::macro {
 
 void tap(const keys::Binding& keys);  // down this frame, up the next
-// modifier (may be None) down, click (button 0 left, 1 right) at a client pixel, modifier up.
+// modifier (may be None) down, click (button 0 left, 1 right, 2 middle) at a client pixel, modifier up.
 void click_with(const keys::Binding& modifier, HWND window, int x, int y, int button = 0);
 // A mode key, then (a few frames later) a left click at a client pixel: e.g. Move, then "here".
 void key_then_click(const keys::Binding& keys, HWND window, int x, int y);

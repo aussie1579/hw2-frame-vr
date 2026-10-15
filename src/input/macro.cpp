@@ -14,7 +14,7 @@ struct Step {
 };
 std::deque<Step> g_steps;
 keys::Binding g_held;        // a modifier the queue is holding down
-bool g_button_down[2] = {};  // mouse buttons the queue is holding down
+bool g_button_down[3] = {};  // mouse buttons the queue is holding down
 
 void key(const keys::Binding& b, bool down) {
     inputsim::keys(b, down);
@@ -77,7 +77,7 @@ bool busy() { return !g_steps.empty(); }
 
 void clear() {
     g_steps.clear();
-    for (int b = 0; b < 2; ++b)
+    for (int b = 0; b < 3; ++b)
         if (g_button_down[b]) inputsim::mouse_button(b, false), g_button_down[b] = false;
     if (g_held.kind == keys::Binding::Keys) inputsim::keys(g_held, false);
     g_held = keys::Binding{};

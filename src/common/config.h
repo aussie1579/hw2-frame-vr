@@ -67,8 +67,11 @@ struct Config {
     bool show_beam = true;
     float cursor_distance = 10.0f;  // metres
 
-    // [buttons]: key names / combos / VR actions (input/key_names.h), defaults in input/buttons.h.
+    // [buttons]: key names / combos / VR actions (input/key_names.h), defaults in input/buttons.h; <button>_hold: what
+    // holding it for hold_ms does instead (the button's own binding then fires on a short press, at the release).
     std::wstring buttons[input::kButtonCount];
+    std::wstring holds[input::kButtonCount];
+    int hold_ms = 600;
 
     // Hotkeys, all Ctrl+Shift+<key> ([hotkeys] in the ini takes key names, see common/hotkeys.h).
     int key_vr_toggle = 0x77;  // F8

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(hw2vr VERSION 0.10.0 LANGUAGES CXX RC)
+project(hw2vr VERSION 0.10.1 LANGUAGES CXX RC)
 
 # HomeworldRM.exe is 32-bit (docs/FINDINGS.md), so the proxy must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)

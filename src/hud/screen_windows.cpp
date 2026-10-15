@@ -7,8 +7,11 @@
 
 #include "common/log.h"
 #include "hud/hud_layer.h"
+#include "input/command_menus.h"
 #include "input/panel_geometry.h"
 #include "input/tablet.h"
+#include "input/ui_canvas.h"
+#include "proxy/gl_api.h"
 #include "vr/overlay.h"
 
 namespace hw2vr::screens {
@@ -24,6 +27,8 @@ constexpr int kPopupMinCells = 20;          // new UI cells (8 x 8 pixels each) 
 constexpr int kPopupGiveUpFrames = 45;      // after the release: nothing turned up, no menu
 constexpr float kPopupDistance = 0.7f;      // metres from the head
 constexpr float kPopupScreenHeight = 0.86f; // its scale: as if the whole screen were this many metres tall
+constexpr int kCloseW = 240, kCloseH = 72;  // the Close tab's image
+constexpr float kCloseWidth = 0.11f;        // metres
 
 struct Window {
     const char* key;
@@ -56,6 +61,10 @@ Window g_status{"hw2vr.status", "Game status", 0, {}};
 Window g_manager{"hw2vr.manager", "Game window", 1, {}};
 Window g_popup{"hw2vr.popup", "Game menu", 2, {}};
 Popup g_pop;
+vr::Overlay g_close;
+gl::GLuint g_close_tex[2] = {};  // normal, highlighted
+input::PanelGeometry g_close_geometry;
+bool g_close_shown = false, g_close_hovered = false;
 bool g_modal = false;
 int g_modal_closed_frames = 0;
 bool g_started = false;
@@ -196,6 +205,16 @@ void start() {
         w->closed_frames = 0;
     }
     g_pop = Popup{};
+    g_close.create("hw2vr.manager.close", "Close game window", 5, false);
+    for (int hover = 0; hover < 2; ++hover) {
+        ui::Item item{{0.03f, 0.08f, 0.97f, 0.92f}, L"\u00D7  Close", ui::Kind::Button};
+        item.hover = hover != 0;
+        const sprites::Image img = ui::render_panel(kCloseW, kCloseH, {item});
+        g_close_tex[hover] = gl::upload_bgra(g_close_tex[hover], img.width, img.height, img.pixels.data());
+    }
+    g_close.set_texture(g_close_tex[0]);
+    g_close.set_width(kCloseWidth);
+    g_close_shown = g_close_hovered = false;
     g_modal = false;
     g_modal_closed_frames = 0;
     g_have_last_tablet = false;
@@ -204,6 +223,11 @@ void start() {
 
 void stop() {
     for (Window* w : {&g_status, &g_manager, &g_popup}) w->overlay.destroy();
+    g_close.destroy();
+    const gl::Api& a = gl::api();
+    for (gl::GLuint& t : g_close_tex)
+        if (t && a.DeleteTextures) a.DeleteTextures(1, &t), t = 0;
+    g_close_shown = g_close_hovered = false;
     g_pop = Popup{};
     g_popup.open = false;
     g_started = false;
@@ -284,14 +308,50 @@ void update(const float hmd[16]) {
             g_manager.geometry.height = h;
         }
         show(g_manager);
+        // The Close tab: above the window's top-right corner, facing the same way.
+        const input::PanelGeometry& m = g_manager.geometry;
+        g_close_geometry = m;
+        g_close_geometry.width = kCloseWidth;
+        g_close_geometry.height = kCloseWidth * static_cast<float>(kCloseH) / static_cast<float>(kCloseW);
+        g_close_geometry.centre = m.centre + m.up * (m.height * 0.5f + 0.008f + g_close_geometry.height * 0.5f) +
+                                  m.right * (m.width * 0.5f - kCloseWidth * 0.5f);
+        float pose[16];
+        g_close_geometry.pose(pose);
+        g_close.place(pose);
+        g_close.show();
+        g_close_shown = true;
     } else {
         g_manager.overlay.hide();
+        g_close.hide();
+        g_close_shown = g_close_hovered = false;
     }
 
     place_popup(head);
 }
 
 bool modal_open() { return g_modal; }
+
+bool close_hover(const Vec3& origin, const Vec3& dir, float* distance) {
+    float uv[2];
+    if (!g_close_shown || !g_close_geometry.intersect(origin, dir, uv, distance)) {
+        close_clear_hover();
+        return false;
+    }
+    if (!g_close_hovered) g_close.set_texture(g_close_tex[1]);
+    g_close_hovered = true;
+    return true;
+}
+
+void close_clear_hover() {
+    if (g_close_hovered) g_close.set_texture(g_close_tex[0]);
+    g_close_hovered = false;
+}
+
+bool close_press() {
+    if (!g_close_shown || !g_close_hovered) return false;
+    menus::close_manager();
+    return true;
+}
 
 void popup_watch(float u, float v, const Vec3& origin, const Vec3& dir) {
     if (!g_started || !g_s.enabled) return;

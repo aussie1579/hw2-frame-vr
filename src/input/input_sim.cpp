@@ -65,13 +65,30 @@ void move_relative(int dx, int dy) {
 }
 
 void mouse_button(int button, bool down) {
-    const DWORD flags = button == 0 ? (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP)
-                                    : (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP);
+    const DWORD flags = button == 0   ? (down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP)
+                        : button == 1 ? (down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP)
+                                      : (down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP);
     send_mouse(flags, 0, 0, 0);
 }
 
 void wheel(int notches) {
     if (notches) send_mouse(MOUSEEVENTF_WHEEL, 0, 0, static_cast<DWORD>(notches * WHEEL_DELTA));
+}
+
+bool bring_to_front(HWND game) {
+    const HWND root = GetAncestor(game, GA_ROOT);
+    if (!root) return false;
+    // Windows lets a background process take the focus only from the thread that has it: share input state with
+    // that thread for the call.
+    const HWND fg = GetForegroundWindow();
+    const DWORD fg_thread = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+    const DWORD self = GetCurrentThreadId();
+    const bool attached = fg_thread && fg_thread != self && AttachThreadInput(self, fg_thread, TRUE);
+    if (IsIconic(root)) ShowWindow(root, SW_RESTORE);
+    BringWindowToTop(root);
+    SetForegroundWindow(root);
+    if (attached) AttachThreadInput(self, fg_thread, FALSE);
+    return game_foreground();
 }
 
 void keys(const keys::Binding& combo, bool down) {

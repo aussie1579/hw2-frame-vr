@@ -15,6 +15,7 @@ namespace {
 
 enum class Act {
     Tap,            // the hotkey
+    Manager,        // the hotkey of the build / research / launch window (a toggle), remembered for its Close tab
     ModeThenClick,  // a mode key, then a click on the target (Move: M, then "there")
     ModifierClick,  // a click on the target with the key held (Attack: Ctrl+click, Guard: G+click)
 };
@@ -36,8 +37,9 @@ struct Def {
 #define FORM "ui\\newui\\taskbar\\formationicons\\"
 #define HUD "ui\\newui\\taskbar\\hudicons\\"
 
-// HW2 keys (scripts/keybindings.lua, docs/FINDINGS.md "Input"). Icon cells: assets::IconRef - the stance and HUD
-// strips' normal cells are picked to be lit (their own "normal" is dim), as the game shows them under the cursor.
+// HW2 keys (scripts/keybindings.lua, docs/FINDINGS.md "Input"). The build and launch windows toggle with Ctrl+B /
+// Ctrl+L, as the taskbar's buttons do: B and L only open them (pressed again, they pick the next ship). Icon cells:
+// assets::IconRef - the stance and HUD strips' normal cells are picked to be lit (their own "normal" is dim).
 const Def kMenus[kMenuCount] = {
     {"orders", L"ORDERS",
      {{L"Move", {CMD "cmd_ico_move.dds"}, L"M", Act::ModeThenClick},
@@ -69,9 +71,9 @@ const Def kMenus[kMenuCount] = {
       {L"Sphere", {FORM "form_ico_sphere.dds"}, L"Shift+F9"},
       {L"Leave group", {}, L"Slash"}}},
     {"production", L"FLEET",
-     {{L"Build", {}, L"B"},
-      {L"Research", {}, L"R"},
-      {L"Launch", {}, L"L"},
+     {{L"Build", {}, L"Ctrl+B", Act::Manager},
+      {L"Research", {}, L"R", Act::Manager},
+      {L"Launch", {}, L"Ctrl+L", Act::Manager},
       {L"Build queue", {HUD "hud_global_queue.dds", 128, 2}, L"Q"},
       {L"Menu", {HUD "menu_ico_main.dds", 128, 3}, L"F10"},
       {L"Events", {HUD "hud_events.dds", 128, 2}, L"V"},
@@ -84,6 +86,7 @@ const Def kMenus[kMenuCount] = {
 #undef HUD
 
 int g_radial[kMenuCount] = {-1, -1, -1, -1};
+const Entry* g_last_manager = nullptr;  // the build / research / launch window last toggled
 
 }  // namespace
 
@@ -121,6 +124,10 @@ bool run(int menu, int item, HWND window, int x, int y, bool target) {
     if (!keys::parse_binding(e.keys, &b) || b.kind != keys::Binding::Keys) return false;
     switch (e.act) {
         case Act::Tap: macro::tap(b); break;
+        case Act::Manager:
+            macro::tap(b);
+            g_last_manager = &e;
+            break;
         case Act::ModeThenClick:
             if (target) macro::key_then_click(b, window, x, y);
             else macro::tap(b);  // the mode only: the next click places it
@@ -135,8 +142,17 @@ bool run(int menu, int item, HWND window, int x, int y, bool target) {
             break;
     }
     HW2VR_LOG("menus: %s > %ls%s", kMenus[menu].name, e.label,
-              e.act == Act::Tap ? "" : target ? " (on the target)" : " (mode only: click to place it)");
+              e.act == Act::Tap || e.act == Act::Manager ? "" : target ? " (on the target)" : " (mode only: click to place it)");
     return true;
+}
+
+void close_manager() {
+    const Entry& e = g_last_manager ? *g_last_manager : kMenus[kProduction].items[0];  // not opened by us: build
+    keys::Binding b;
+    if (!keys::parse_binding(e.keys, &b)) return;
+    macro::tap(b);
+    HW2VR_LOG("menus: close the %ls window", e.label);
+    g_last_manager = nullptr;
 }
 
 }  // namespace hw2vr::menus
