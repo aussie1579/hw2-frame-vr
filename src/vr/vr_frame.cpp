@@ -7,6 +7,7 @@
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
 #include "hud/hud_panel.h"
+#include "hud/screen_windows.h"
 #include "input/controls.h"
 #include "proxy/gl_api.h"
 #include "proxy/gl_hooks.h"
@@ -309,6 +310,9 @@ void before_swap(HDC dc) {
             if (g_eye_valid[eye]) vr::submit(eye, g_eye_tex[eye], g_pose_used[eye]);
         telemetry(replayed, replay_ms);
     }
+    hud::update_mask();          // where the screen UI is: menus up? build window open?
+    screens::before_swap();
+    panel::set_shown(screens::modal_open());  // the menu-only panel ([vr] hud = tablet)
     panel::update_texture(g_frame_pose, static_cast<float>(g_client_h) / static_cast<float>(g_client_w));
     controls::before_swap();
 }

@@ -16,6 +16,8 @@ struct ButtonState {
 struct State {
     bool pointer_valid = false;
     float pointer_pose[16];  // right-hand laser ("tip" pose), seated space, column-major; aims down -Z
+    bool left_valid = false;
+    float left_pose[16];     // left hand, OpenXR grip convention: +X out of the palm, -Z along the fingers
     ButtonState left_click, right_click;  // left_click: the right trigger's pull past trigger_press
     float click_pull = 0.0f;              // the right trigger, 0..1
     float camera[2] = {}, zoom[2] = {};  // left and right stick, -1..1

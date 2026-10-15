@@ -11,6 +11,10 @@
       "type": "pose"
     },
     {
+      "name": "/actions/main/in/left_hand",
+      "type": "pose"
+    },
+    {
       "name": "/actions/main/in/click",
       "type": "vector1"
     },
@@ -98,9 +102,10 @@
       "language_tag": "en_US",
       "/actions/main": "Homeworld 2 VR",
       "/actions/main/in/pointer": "Laser pointer (mouse cursor)",
+      "/actions/main/in/left_hand": "Left hand (the wrist tablet: palm towards you)",
       "/actions/main/in/click": "Left click: trigger pull (select, drag, grab the console bar)",
       "/actions/main/in/left_trigger": "Hotkey: Left trigger pull (key set in hw2vr.ini [buttons])",
-      "/actions/main/in/rightclick": "Right click (orders menu)",
+      "/actions/main/in/rightclick": "Order wheel (aiming into the world) / right click (on a game window)",
       "/actions/main/in/camera": "Camera orbit (right-mouse drag)",
       "/actions/main/in/zoom": "Mouse wheel (zoom)",
       "/actions/main/out/haptic": "Click haptic",

@@ -15,8 +15,12 @@
 #include "hud/hud_layer.h"
 #include "hud/hud_panel.h"
 #include "input/input_sim.h"
+#include "hud/screen_windows.h"
 #include "input/laser_math.h"
+#include "input/macro.h"
+#include "input/order_wheel.h"
 #include "input/sprites.h"
+#include "input/tablet.h"
 #include "proxy/gl_api.h"
 #include "stereo/depth_probe.h"
 #include "vr/overlay.h"
@@ -48,7 +52,9 @@ const wchar_t* const kBarHelp =
     L"Right stick left / right:  flatter / more curved\n"
     L"Right stick click:  flat, or curved round you";
 
-enum class Aim { None, Panel, World, Bar };
+// What the laser is on, in priority order: the order wheel (while open), the wrist tablet, a game window (status
+// strip, build/research/launch), the grab bar, the panel showing the game's screen UI, the world.
+enum class Aim { None, Panel, World, Bar, Tablet, Window, Wheel };
 
 Settings g_s;
 bool g_started = false;
@@ -70,6 +76,12 @@ int g_cursor_x = INT_MIN, g_cursor_y = INT_MIN;  // last client position we put 
 
 bool g_orbiting = false;
 double g_orbit_acc[2] = {}, g_zoom_acc = 0.0;
+double g_orbit_rate[2] = {};  // eased towards the stick's rate, so the view never jerks into motion
+
+// The bumper: aiming into the world it opens the order wheel at the target (the game's own right-click menu would
+// be invisible there); on a game window it is a right click.
+bool g_bumper_click = false;          // a right click goes out when it's released
+int g_anchor_x = 0, g_anchor_y = 0;  // the cursor when the wheel opened: where its order applies
 bool g_held[input::kButtonCount] = {};
 
 bool g_dragging = false;
@@ -99,6 +111,9 @@ input::PanelGeometry bar_layout(const input::PanelGeometry& p) {
 
 void release_mouse() {
     g_sticky = false;
+    macro::clear();
+    if (wheel::is_open()) wheel::close();
+    g_bumper_click = false;
     for (int b = 0; b < 2; ++b)
         if (g_mouse_down[b]) inputsim::mouse_button(b, false), g_mouse_down[b] = false;
     if (g_orbiting) inputsim::mouse_button(1, false), g_orbiting = false;
@@ -230,14 +245,20 @@ void orbit(const Frame& f, const vrinput::State& st, bool allowed) {
         inputsim::mouse_button(1, true);
         g_orbiting = true;
         g_orbit_acc[0] = g_orbit_acc[1] = 0.0;
+        g_orbit_rate[0] = g_orbit_rate[1] = 0.0;
     } else if (!want && g_orbiting) {
         inputsim::mouse_button(1, false);
         g_orbiting = false;
         return;
     }
     if (!g_orbiting) return;
-    g_orbit_acc[0] += x * g_s.camera_speed * f.dt;
-    g_orbit_acc[1] += (g_s.camera_invert_y ? y : -y) * g_s.camera_speed * f.dt;  // stick up = mouse up
+    // Curved response (fine control near the centre, full speed at the edge), eased over ~0.15 s.
+    auto curve = [&](float v) { return std::copysign(std::pow(std::fabs(v), g_s.camera_curve), v); };
+    const double target[2] = {curve(x) * g_s.camera_speed, (g_s.camera_invert_y ? 1.0 : -1.0) * curve(y) * g_s.camera_speed};
+    const double ease = std::min(1.0, f.dt / 0.15);
+    for (int i = 0; i < 2; ++i) g_orbit_rate[i] += (target[i] - g_orbit_rate[i]) * ease;
+    g_orbit_acc[0] += g_orbit_rate[0] * f.dt;
+    g_orbit_acc[1] += g_orbit_rate[1] * f.dt;  // stick up = mouse up
     const int dx = static_cast<int>(g_orbit_acc[0]), dy = static_cast<int>(g_orbit_acc[1]);
     g_orbit_acc[0] -= dx;
     g_orbit_acc[1] -= dy;
@@ -256,6 +277,30 @@ void zoom(const Frame& f, const vrinput::State& st, bool allowed) {
         inputsim::wheel(notch);  // stick up = wheel away = zoom in
         g_zoom_acc -= notch;
     }
+}
+
+// HW2 orders (scripts/keybindings.lua): Move = M then a click on the spot, Attack = Ctrl+click (force attack),
+// Guard/Harvest/Repair/Special = hold G/H/Y/Z and click the target, Dock = D, Stop = S (cancel orders).
+void give_order(const Frame& f, int order) {
+    auto binding = [](const wchar_t* text) {
+        keys::Binding b;
+        keys::parse_binding(text, &b);
+        return b;
+    };
+    HW2VR_LOG("controls: order wheel -> %ls", wheel::label(order));
+    const int x = g_anchor_x, y = g_anchor_y;
+    switch (order) {
+        case wheel::kMove: macro::key_then_click(binding(L"M"), f.window, x, y); break;
+        case wheel::kAttack: macro::click_with(binding(L"Ctrl"), f.window, x, y); break;
+        case wheel::kGuard: macro::click_with(binding(L"G"), f.window, x, y); break;
+        case wheel::kHarvest: macro::click_with(binding(L"H"), f.window, x, y); break;
+        case wheel::kRepair: macro::click_with(binding(L"Y"), f.window, x, y); break;
+        case wheel::kSpecial: macro::click_with(binding(L"Z"), f.window, x, y); break;
+        case wheel::kDock: macro::tap(binding(L"D")); break;
+        case wheel::kStop: macro::tap(binding(L"S")); break;
+        default: return;  // centre: nothing
+    }
+    if (g_s.haptics) vrinput::pulse(0.015f, 0.6f);
 }
 
 void buttons(const vrinput::State& st, bool allowed, Requests* req) {
@@ -292,17 +337,24 @@ void place_cursor(const Frame& f, Aim aim, const Vec3& eye, Vec3* world_point) {
     const input::PanelGeometry& g = panel::geometry();
     float pose[16];
     const float panel_pixel = g.width / static_cast<float>(f.client_w);  // metres per window pixel on the panel
-    if (aim == Aim::World && f.game_projection) {
+    if (aim == Aim::Window) {
+        float metres_per_pixel = 0.0f;
+        if (!screens::pose_at(static_cast<float>(c.x) / f.client_w, static_cast<float>(c.y) / f.client_h, f.client_w,
+                              pose, &metres_per_pixel))
+            return g_cursor.hide();
+        g_cursor.set_width(hud::kCursorSize * metres_per_pixel);
+    } else if (aim == Aim::World || aim == Aim::Tablet || aim == Aim::Wheel || !panel::shown()) {
+        if (!f.game_projection) return g_cursor.hide();
         const Vec3 view = input::unproject_pixel(f.game_projection, static_cast<float>(c.x), static_cast<float>(c.y),
                                                  f.client_w, f.client_h);
         const Vec3 dir = normalize(rotate(f.camera_pose, view));
         *world_point = position(f.camera_pose) + dir * g_cursor_depth;
         face_eye_pose(*world_point, eye, pose);
-        // Same angular size as on the panel.
-        const float angle = hud::kCursorSize * panel_pixel / std::max(panel::placement().distance, 0.1f);
+        // The size it has in the game's own view.
+        const float angle = 2.0f * std::atan(1.0f / f.game_projection[0]) / static_cast<float>(f.client_w) * hud::kCursorSize;
         g_cursor.set_width(angle * length(*world_point - eye));
     } else {
-        if (!panel::placed()) return g_cursor.hide();
+        if (!panel::shown()) return g_cursor.hide();
         g.pose_at(static_cast<float>(c.x) / f.client_w, static_cast<float>(c.y) / f.client_h, 0.004f, pose);
         g_cursor.set_width(hud::kCursorSize * panel_pixel);
     }
@@ -331,10 +383,14 @@ void start(const wchar_t* manifest_path) {
     g_bar_tex = gl::upload_bgra(g_bar_tex, bar.width, bar.height, bar.pixels.data());
     g_beam.create("hw2vr.beam", "Laser", 2, false);
     g_bar.create("hw2vr.bar", "Move the screen", 2, false);
-    g_cursor.create("hw2vr.cursor", "Cursor", 3, true);
+    g_cursor.create("hw2vr.cursor", "Cursor", 7, true);  // above every panel (the tablet is 5, the wheel 6)
     g_hint.create("hw2vr.hint", "HW2 VR help", 4, false);
     g_beam.set_texture(g_beam_tex);
     g_bar.set_texture(g_bar_tex);
+    tablet::start();
+    wheel::start();
+    screens::start();
+    g_bumper_click = false;
 
     char line[256] = {}, desc[32];
     for (int i = 0; i < input::kButtonCount; ++i) {
@@ -352,6 +408,10 @@ void stop() {
     if (!g_started) return;
     release_mouse();
     release_keys();
+    macro::clear();
+    wheel::stop();
+    tablet::stop();
+    screens::stop();
     vrinput::shutdown();
     for (vr::Overlay* o : {&g_beam, &g_cursor, &g_bar, &g_hint}) o->destroy();
     const gl::Api& a = gl::api();
@@ -395,8 +455,12 @@ Requests update(const Frame& f) {
         g_logged_foreground = false;
     }
 
-    const bool showing = panel::placed();
-    const bool movable = showing && panel::movable();  // grab bar and help only on the movable (shelved) panel
+    macro::run();
+    tablet::update(st, f.hmd, f.dt);
+    screens::update(f.hmd);
+
+    const bool showing = panel::shown();
+    const bool movable = showing && panel::movable();  // grab bar and help only on a movable panel (the console)
     const input::PanelGeometry& g = panel::geometry();
     if (movable) {
         const input::PanelGeometry bar = bar_layout(g);
@@ -409,7 +473,7 @@ Requests update(const Frame& f) {
 
     Aim aim = Aim::None;
     Vec3 origin, dir;
-    float hit_uv[2] = {}, hit_distance = 0.0f, bar_distance = 0.0f;
+    float hit_uv[2] = {}, hit_distance = 0.0f, bar_distance = 0.0f, screen_uv[2] = {};
     if (st.pointer_valid) {
         origin = position(st.pointer_pose);
         dir = normalize(-axis_z(st.pointer_pose));
@@ -418,7 +482,14 @@ Requests update(const Frame& f) {
         bar_area.height += 2.0f * kBarMargin;
         float unused[2];
         const bool held = g_mouse_down[0] || g_mouse_down[1];
-        if (movable && !held && bar_area.intersect(origin, dir, unused, &bar_distance)) {
+        if (wheel::is_open()) {
+            hit_distance = wheel::point(origin, dir);
+            aim = Aim::Wheel;
+        } else if (!held && tablet::hover(origin, dir, &hit_distance)) {
+            aim = Aim::Tablet;
+        } else if (screens::hit(origin, dir, &hit_distance, screen_uv)) {
+            aim = Aim::Window;
+        } else if (movable && !held && bar_area.intersect(origin, dir, unused, &bar_distance)) {
             aim = Aim::Bar;
         } else if (showing && g.intersect(origin, dir, hit_uv, &hit_distance)) {
             // The panel is mostly see-through: it only counts where the game's UI has something. A held button
@@ -428,6 +499,9 @@ Requests update(const Frame& f) {
         } else {
             aim = Aim::World;
         }
+        if (aim != Aim::Tablet) tablet::clear_hover();
+    } else {
+        tablet::clear_hover();
     }
 
     // Grab bar: press the trigger on it to drag the panel; letting go saves.
@@ -466,16 +540,20 @@ Requests update(const Frame& f) {
                 g_cursor_depth = length(hit) / f.world_scale;
             }
         }
-    } else {
+    } else if (aim != Aim::Wheel) {
         depth::clear_ray();
     }
 
-    // The cursor follows the laser unless the panel is being moved or the camera orbits (that drag owns the mouse).
+    // The cursor follows the laser unless the panel is being moved, the camera orbits (that drag owns the mouse), an
+    // order is being given (wheel open, or its clicks still going out) or the laser is on the tablet.
     const bool busy = g_dragging;
     const bool reset = aim != g_prev_aim;
-    if (foreground && !busy && !g_orbiting) {
+    const bool cursor_free = foreground && !busy && !g_orbiting && !macro::busy() && aim != Aim::Wheel && aim != Aim::Tablet;
+    if (cursor_free) {
         if (aim == Aim::Panel) {
             aim_cursor(f, hit_uv[0] * f.client_w, hit_uv[1] * f.client_h, f.dt, reset);
+        } else if (aim == Aim::Window) {
+            aim_cursor(f, screen_uv[0] * f.client_w, screen_uv[1] * f.client_h, f.dt, reset);
         } else if (aim == Aim::World && f.game_projection) {
             float px, py;
             if (input::project_direction(f.game_projection, world_target, f.client_w, f.client_h, &px, &py)) {
@@ -486,15 +564,41 @@ Requests update(const Frame& f) {
     }
     g_prev_aim = aim;
 
-    const bool can_click = foreground && !busy && !g_orbiting && (aim == Aim::Panel || aim == Aim::World) &&
-                           inputsim::cursor_over(f.window);
-    click(st.left_click, 0, can_click && aim != Aim::Bar, dir);
-    click(st.right_click, 1, can_click, dir);
+    // Trigger: on the tablet it presses the button; elsewhere it is the left mouse button.
+    const bool game_aim = aim == Aim::Panel || aim == Aim::World || aim == Aim::Window;
+    if (aim == Aim::Tablet && st.left_click.pressed && foreground && tablet::press() && g_s.haptics) vrinput::pulse(0.012f, 0.5f);
+    if (st.left_click.released) tablet::release();
+    const bool can_click = foreground && !busy && !g_orbiting && !macro::busy() && game_aim && inputsim::cursor_over(f.window);
+    click(st.left_click, 0, can_click, dir);
+
+    // Bumper: aiming into the world it opens the order wheel on the target (let go on a slice to give that order,
+    // in the centre for nothing); on a game window it is a right click.
+    if (st.right_click.pressed && foreground && !busy && !macro::busy()) {
+        int cx = g_cursor_x, cy = g_cursor_y;
+        if (cx == INT_MIN && !inputsim::cursor_client(f.window, &cx, &cy)) cx = f.client_w / 2, cy = f.client_h / 2;
+        if (aim == Aim::World && st.pointer_valid) {
+            g_anchor_x = cx, g_anchor_y = cy;
+            wheel::open(eye, origin + dir * 5.0f);
+            if (g_s.haptics) vrinput::pulse(0.01f, 0.3f);
+        } else if (game_aim) {
+            g_bumper_click = true;
+            g_anchor_x = cx, g_anchor_y = cy;
+        }
+    }
+    if (st.right_click.released) {
+        if (wheel::is_open()) {
+            give_order(f, wheel::close());
+        } else if (g_bumper_click && foreground) {
+            macro::click_with(keys::Binding{}, f.window, g_anchor_x, g_anchor_y, 1);  // a plain right click
+        }
+        g_bumper_click = false;
+    }
+
     // A held button starts dragging once the laser has moved far enough from where it went down.
     if (g_sticky && st.pointer_valid && dot(dir, g_press_dir) < std::cos(g_s.drag_degrees * 3.14159265f / 180.0f))
         g_sticky = false;
 
-    const bool sticks = foreground && !busy && !g_mouse_down[0] && !g_mouse_down[1];
+    const bool sticks = foreground && !busy && !g_mouse_down[0] && !g_mouse_down[1] && !wheel::is_open();
     orbit(f, st, sticks);
     zoom(f, st, sticks);
     buttons(st, foreground, &req);
@@ -505,10 +609,11 @@ Requests update(const Frame& f) {
     if (!st.pointer_valid) {
         g_beam.hide();
     } else {
-        const float beam_length = g_dragging           ? g_grab_distance
-                                  : aim == Aim::Bar    ? bar_distance
-                                  : aim == Aim::Panel  ? hit_distance
-                                                       : length(world_point - origin);
+        const float beam_length = g_dragging                                              ? g_grab_distance
+                                  : aim == Aim::Bar                                       ? bar_distance
+                                  : aim == Aim::Panel || aim == Aim::Tablet || aim == Aim::Window ? hit_distance
+                                  : aim == Aim::Wheel && hit_distance > 0.0f              ? hit_distance
+                                                                                          : length(world_point - origin);
         show_beam(origin, dir, beam_length, eye);
     }
     return req;

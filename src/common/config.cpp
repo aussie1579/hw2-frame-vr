@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cstdio>
 #include <cwchar>
 #include <iterator>
 
@@ -45,10 +46,36 @@ Config load_config(const std::wstring& ini_path) {
         GetPrivateProfileIntW(L"vr", L"hud_premultiplied", c.vr_hud_premultiplied ? 1 : 0, ini_path.c_str()) != 0;
     {
         wchar_t hud[16];
-        GetPrivateProfileStringW(L"vr", L"hud", L"console", hud, static_cast<DWORD>(std::size(hud)), ini_path.c_str());
-        c.vr_hud_layout = _wcsicmp(hud, L"aligned") == 0 ? 1 : _wcsicmp(hud, L"panel") == 0 ? 2 : 0;
+        GetPrivateProfileStringW(L"vr", L"hud", L"tablet", hud, static_cast<DWORD>(std::size(hud)), ini_path.c_str());
+        c.vr_hud_layout = _wcsicmp(hud, L"aligned") == 0   ? 1
+                          : _wcsicmp(hud, L"panel") == 0   ? 2
+                          : _wcsicmp(hud, L"console") == 0 ? 0
+                                                           : 3;
     }
     c.vr_world_markers = GetPrivateProfileIntW(L"vr", L"world_markers", 1, ini_path.c_str()) != 0;
+    c.tablet_width = read_float(ini_path, L"tablet", L"width", c.tablet_width);
+    c.tablet_lift = read_float(ini_path, L"tablet", L"lift", c.tablet_lift);
+    {
+        wchar_t axis[8];
+        GetPrivateProfileStringW(L"tablet", L"palm_axis", L"+x", axis, static_cast<DWORD>(std::size(axis)), ini_path.c_str());
+        constexpr const wchar_t* kAxes[] = {L"+x", L"-x", L"+y", L"-y", L"+z", L"-z"};
+        for (int i = 0; i < 6; ++i)
+            if (_wcsicmp(axis, kAxes[i]) == 0) c.tablet_palm_axis = i;
+    }
+    c.tablet_always = GetPrivateProfileIntW(L"tablet", L"always", 0, ini_path.c_str()) != 0;
+    auto read_rect = [&](const wchar_t* key, float* r) {
+        wchar_t buf[96];
+        GetPrivateProfileStringW(L"tablet", key, L"", buf, static_cast<DWORD>(std::size(buf)), ini_path.c_str());
+        float v[4];
+        if (buf[0] && swscanf_s(buf, L"%f , %f , %f , %f", &v[0], &v[1], &v[2], &v[3]) == 4)
+            for (int i = 0; i < 4; ++i) r[i] = v[i];
+    };
+    read_rect(L"status_region", c.status_region);
+    read_rect(L"manager_region", c.manager_region);
+    read_rect(L"menu_region", c.modal_region);
+    c.manager_width = read_float(ini_path, L"tablet", L"manager_width", c.manager_width);
+    c.menu_distance = read_float(ini_path, L"tablet", L"menu_distance", c.menu_distance);
+    c.menu_width_degrees = read_float(ini_path, L"tablet", L"menu_width_degrees", c.menu_width_degrees);
     c.console_distance = read_float(ini_path, L"console", L"distance", c.console_distance);
     c.console_width_degrees = read_float(ini_path, L"console", L"width_degrees", c.console_width_degrees);
     c.console_height = read_float(ini_path, L"console", L"height", c.console_height);
@@ -67,6 +94,7 @@ Config load_config(const std::wstring& ini_path) {
     };
     c.stick_deadzone = read_float(ini_path, L"controls", L"stick_deadzone", c.stick_deadzone);
     c.camera_speed = read_float(ini_path, L"controls", L"camera_speed", c.camera_speed);
+    c.camera_curve = read_float(ini_path, L"controls", L"camera_curve", c.camera_curve);
     c.camera_invert_y = flag(L"camera_invert_y", c.camera_invert_y);
     c.zoom_notches_per_second = read_float(ini_path, L"controls", L"zoom_notches_per_second", c.zoom_notches_per_second);
     c.zoom_invert = flag(L"zoom_invert", c.zoom_invert);

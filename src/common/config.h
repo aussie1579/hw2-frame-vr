@@ -18,10 +18,22 @@ struct Config {
     bool vr_hud_premultiplied = true;
     bool vr_sync_stereo = true;      // [vr] stereo = sync (both eyes every frame) | afr (alternating frames)
     bool vr_fit_window = true;       // [vr] fit_window: client area fully on its monitor while VR runs
-    int vr_hud_layout = 0;           // [vr] hud = console (0) | aligned (1) | panel (2, shelved)
+    int vr_hud_layout = 3;           // [vr] hud = console (0) | aligned (1) | panel (2, shelved) | tablet (3)
     bool vr_world_markers = true;    // [vr] world_markers: selection circles etc. at their ship's depth
     float vr_hud_distance = 3.0f;    // aligned HUD: metres
     float vr_hud_scale = 1.0f;       // aligned HUD: 1 = spans the game's field of view
+
+    // [tablet] (hud = tablet): the wrist tablet and the game windows it brings up.
+    float tablet_width = 0.32f;
+    float tablet_lift = 0.11f;
+    int tablet_palm_axis = 0;     // 0 +X ... 5 -Z of the left hand's grip pose
+    bool tablet_always = false;
+    float status_region[4] = {0.75f, 0.0f, 1.0f, 0.07f};
+    float manager_region[4] = {0.855f, 0.06f, 1.0f, 0.86f};
+    float modal_region[4] = {0.3f, 0.3f, 0.7f, 0.7f};
+    float manager_width = 0.30f;
+    float menu_distance = 2.0f;        // the menu/dialog panel
+    float menu_width_degrees = 90.0f;
 
     // [console] (hud = console): until moved with its grab bar (then hw2vr_console.ini).
     float console_distance = 0.85f;       // metres
@@ -37,7 +49,8 @@ struct Config {
 
     // [controls]
     float stick_deadzone = 0.2f;
-    float camera_speed = 1200.0f;  // left stick orbit: mouse counts per second at full stick
+    float camera_speed = 450.0f;   // left stick orbit: mouse counts per second at full stick
+    float camera_curve = 2.0f;     // stick response exponent (1 = linear)
     bool camera_invert_y = false;
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;

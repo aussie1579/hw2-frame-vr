@@ -20,7 +20,8 @@ namespace hw2vr::controls {
 struct Settings {
     keys::Binding buttons[input::kButtonCount];
     float stick_deadzone = 0.2f;
-    float camera_speed = 1200.0f;  // mouse counts per second at full stick (right-drag orbit)
+    float camera_speed = 450.0f;   // mouse counts per second at full stick (right-drag orbit)
+    float camera_curve = 2.0f;     // stick response exponent: 1 = linear, 2 = gentle near the centre
     bool camera_invert_y = false;
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;

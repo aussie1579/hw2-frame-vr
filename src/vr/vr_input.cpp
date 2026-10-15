@@ -13,7 +13,7 @@ namespace {
 
 bool g_ready = false;
 ::vr::VRActionSetHandle_t g_set = ::vr::k_ulInvalidActionSetHandle;
-::vr::VRActionHandle_t g_pointer = 0, g_left_click = 0, g_right_click = 0, g_camera = 0, g_zoom = 0, g_haptic = 0;
+::vr::VRActionHandle_t g_pointer = 0, g_left_hand = 0, g_left_click = 0, g_right_click = 0, g_camera = 0, g_zoom = 0, g_haptic = 0;
 ::vr::VRActionHandle_t g_buttons[input::kButtonCount] = {};
 State g_state;
 bool g_logged_inactive = false;
@@ -90,6 +90,7 @@ bool init(const std::wstring& manifest_path) {
     err = in->GetActionSetHandle("/actions/main", &g_set);
     bool ok = err == ::vr::VRInputError_None;
     ok &= action("/actions/main/in/pointer", &g_pointer);
+    ok &= action("/actions/main/in/left_hand", &g_left_hand);
     ok &= action("/actions/main/in/click", &g_left_click);
     ok &= action("/actions/main/in/rightclick", &g_right_click);
     ok &= action("/actions/main/in/camera", &g_camera);
@@ -132,6 +133,11 @@ const State& update() {
         g_logged_inactive = true;
     }
     if (pose.bActive) g_logged_inactive = false;
+    ::vr::InputPoseActionData_t left{};
+    in->GetPoseActionDataForNextFrame(g_left_hand, ::vr::TrackingUniverseSeated, &left, sizeof left,
+                                      ::vr::k_ulInvalidInputValueHandle);
+    g_state.left_valid = left.bActive && left.pose.bPoseIsValid;
+    if (g_state.left_valid) mat4::from_rows3x4(left.pose.mDeviceToAbsoluteTracking.m, g_state.left_pose);
 
     g_state.left_click = read_pull(g_left_click, prev.left_click, &g_state.click_pull);
     g_state.right_click = track(read_button(g_right_click), prev.right_click);

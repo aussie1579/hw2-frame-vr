@@ -51,11 +51,20 @@ int g_cursor_override_x = -1, g_cursor_override_y = -1;
 gl::GLuint g_cursor_tex = 0, g_cursor_fbo = 0;
 Cursor g_cursor, g_last_cursor;
 
+// Crops of the overlay at native resolution (tablet status strip, manager windows).
+constexpr int kCropSlots = 4;
+struct Crop {
+    gl::GLuint tex = 0, fbo = 0;
+    int width = 0, height = 0;
+};
+Crop g_crops[kCropSlots];
+
 // Panel filter: the overlay's mipmaps sampled 2x2 per output pixel one level above the output size (a box filter).
 gl::GLuint g_panel_tex = 0, g_panel_fbo = 0, g_panel_program = 0, g_panel_vao = 0;
 int g_panel_width = 0, g_panel_height = 0;
 gl::GLint g_loc_src = -1, g_loc_texel = -1, g_loc_lod = -1, g_loc_backing = -1;
 bool g_panel_failed = false;
+bool g_mips_fresh = false;  // update_mask built this frame's mipmaps (and mask) already
 
 // UI coverage mask: alpha of an overlay mip level, read into a ring of pixel-pack buffers and mapped a frame later.
 constexpr int kMaskLevel = 3;  // 1/8 per side
@@ -190,6 +199,7 @@ void end_frame() {
     g_depths.clear();
     g_kind_replay = g_depth_replay = 0;
     g_frame_depth = 0.0f;
+    g_mips_fresh = false;
 
     if (best < kMinOrthoUploads) winner = 0;
     if (winner == 0) {
@@ -345,7 +355,7 @@ unsigned build_panel_texture(int width, int height, float backing) {
     a.ActiveTexture(gl::TEXTURE0);
     a.BindTexture(gl::TEXTURE_2D, g_tex);
     a.BindSampler(0, 0);
-    a.GenerateMipmap(gl::TEXTURE_2D);
+    if (!g_mips_fresh) a.GenerateMipmap(gl::TEXTURE_2D);
     a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_panel_fbo);
     a.Viewport(0, 0, width, height);
     a.UseProgram(g_panel_program);
@@ -357,8 +367,58 @@ unsigned build_panel_texture(int width, int height, float backing) {
     const float b = std::clamp(backing, 0.0f, 1.0f);
     a.Uniform4f(g_loc_backing, 0.02f * b, 0.03f * b, 0.05f * b, b);  // dark blue-grey
     a.DrawArrays(gl::TRIANGLES, 0, 3);
-    update_ui_mask();
+    if (!g_mips_fresh) update_ui_mask();
     return g_panel_tex;
+}
+
+void update_mask() {
+    if (!g_tex || !overlay_ready()) return;
+    const gl::Api& a = gl::api();
+    gl::StateGuard guard;
+    gl::StateGuard::neutral();
+    a.ActiveTexture(gl::TEXTURE0);
+    a.BindTexture(gl::TEXTURE_2D, g_tex);
+    a.GenerateMipmap(gl::TEXTURE_2D);
+    update_ui_mask();
+    g_mips_fresh = true;  // build_panel_texture reuses them this frame
+}
+
+float ui_coverage(const float r[4]) {
+    if (g_mask.empty() || g_mask_w <= 0 || g_mask_h <= 0) return -1.0f;
+    const int x0 = std::clamp(static_cast<int>(r[0] * g_mask_w), 0, g_mask_w - 1);
+    const int x1 = std::clamp(static_cast<int>(r[2] * g_mask_w), 0, g_mask_w - 1);
+    const int y0 = std::clamp(static_cast<int>((1.0f - r[3]) * g_mask_h), 0, g_mask_h - 1);  // rows bottom-up
+    const int y1 = std::clamp(static_cast<int>((1.0f - r[1]) * g_mask_h), 0, g_mask_h - 1);
+    int covered = 0, total = 0;
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x, ++total)
+            if (g_mask[static_cast<size_t>(y) * g_mask_w + x] > 2) ++covered;
+    return total ? static_cast<float>(covered) / static_cast<float>(total) : 0.0f;
+}
+
+unsigned crop_texture(int slot, const float r[4], int* width, int* height) {
+    if (!g_tex || !g_fbo || slot < 0 || slot >= kCropSlots || g_tex_width <= 0 || g_tex_height <= 0) return 0;
+    const int x0 = std::clamp(static_cast<int>(r[0] * g_tex_width), 0, g_tex_width - 1);
+    const int x1 = std::clamp(static_cast<int>(r[2] * g_tex_width), x0 + 1, g_tex_width);
+    const int y0 = std::clamp(static_cast<int>((1.0f - r[3]) * g_tex_height), 0, g_tex_height - 1);  // GL rows bottom-up
+    const int y1 = std::clamp(static_cast<int>((1.0f - r[1]) * g_tex_height), y0 + 1, g_tex_height);
+    const int w = x1 - x0, h = y1 - y0;
+    Crop& c = g_crops[slot];
+    gl::StateGuard guard;
+    gl::StateGuard::neutral();
+    if (w != c.width || h != c.height) {
+        if (!ensure_rgba_target(&c.tex, &c.fbo, w, h, "crop")) return 0;
+        c.width = w;
+        c.height = h;
+    }
+    const gl::Api& a = gl::api();
+    a.BindFramebuffer(gl::READ_FRAMEBUFFER, g_fbo);
+    a.ReadBuffer(gl::COLOR_ATTACHMENT0);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, c.fbo);
+    a.BlitFramebuffer(x0, y0, x1, y1, 0, 0, w, h, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    *width = w;
+    *height = h;
+    return c.tex;
 }
 
 int ui_at(float u, float v) {
@@ -427,6 +487,11 @@ void release() {
     if (!a.DeleteTextures) return;
     for (gl::GLuint* t : {&g_tex, &g_cursor_tex, &g_panel_tex})
         if (*t) a.DeleteTextures(1, t), *t = 0;
+    for (Crop& c : g_crops) {
+        if (c.tex) a.DeleteTextures(1, &c.tex);
+        if (c.fbo) a.DeleteFramebuffers(1, &c.fbo);
+        c = Crop{};
+    }
     for (gl::GLuint* f : {&g_fbo, &g_cursor_fbo, &g_panel_fbo, &g_mask_fbo})
         if (*f) a.DeleteFramebuffers(1, f), *f = 0;
     if (g_mask_pbo[0]) a.DeleteBuffers(2, g_mask_pbo);

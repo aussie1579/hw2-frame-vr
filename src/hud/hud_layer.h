@@ -35,12 +35,21 @@ void release();              // delete GL objects (VR off)
 // The overlay filtered down to width x height for the VR panel (call after the frame's draws, before the swap),
 // over a dark backing of opacity `backing` (0 = see-through). Returns the panel texture, 0 if there's no overlay.
 unsigned build_panel_texture(int width, int height, float backing = 0.0f);
+// Mipmaps of this frame's screen UI and the coverage mask from them (ui_at / ui_coverage). Once per frame after the
+// game's draws, whether or not a panel shows the UI.
+void update_mask();
 
 // Where the 2D UI actually has something: a coarse coverage mask (1/8 of the window per side) read back without
 // stalling, one frame late, from the overlay's mipmaps. build_panel_texture updates it. The laser treats the
 // panel as UI only where the mask is set; elsewhere it points through the panel into the world.
 // Returns 1 = UI there, 0 = transparent, -1 = no mask yet. u, v from the top-left.
 int ui_at(float u, float v);
+// Fraction (0..1) of a screen rectangle {u0, v0, u1, v1} (top-left origin) that has screen UI on it, from the same
+// mask; -1 = no mask yet. Tells whether a game window (build manager, a menu) is open.
+float ui_coverage(const float rect[4]);
+// A rectangle of this frame's screen UI {u0, v0, u1, v1} (top-left origin) copied at native resolution into crop
+// texture `slot` (0..3); returns it with its size, 0 if there's no overlay. Call after the frame's draws.
+unsigned crop_texture(int slot, const float rect[4], int* width, int* height);
 
 // The mouse cursor, drawn into its own kCursorSize square texture with its hotspot at the centre.
 constexpr int kCursorSize = 128;

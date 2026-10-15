@@ -379,6 +379,29 @@ void hud_pipeline_test(const Gl& gl, HDC dc, HMODULE proxy) {
                     ui_at(0.5f, 0.5f), ui_at(5.0f / 6, 0.5f));
         check(ui_at(1.0f / 6, 0.5f) == 1 && ui_at(0.5f, 0.5f) == 0 && ui_at(5.0f / 6, 0.5f) == 0,
               "UI mask: set over the 2D element only (the laser points through the rest)");
+
+        // Game windows: how much of a region the UI covers (is the build window open?) and a crop of it at native
+        // resolution (what the VR window shows).
+        using PFNCOVERAGE = float (*)(float, float, float, float);
+        using PFNCROP = unsigned (*)(float, float, float, float, int*, int*);
+        auto coverage = reinterpret_cast<PFNCOVERAGE>(GetProcAddress(proxy, "hw2vr_test_ui_coverage"));
+        auto crop = reinterpret_cast<PFNCROP>(GetProcAddress(proxy, "hw2vr_test_crop"));
+        if (coverage && crop) {
+            const float left = coverage(0.0f, 0.0f, 0.3f, 1.0f), middle = coverage(0.4f, 0.0f, 0.6f, 1.0f);
+            std::printf("  UI coverage: left third %.2f, middle %.2f\n", left, middle);
+            check(left > 0.9f && middle < 0.05f, "UI coverage: the 2D element's region full, the 3D element's empty");
+            int cw = 0, ch = 0;
+            const unsigned tex = crop(0.0f, 0.0f, 1.0f / 3, 1.0f, &cw, &ch);
+            std::vector<unsigned char> cp(static_cast<size_t>(std::max(cw, 1)) * std::max(ch, 1) * 4);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, cp.data());
+            const unsigned char* mid = &cp[(static_cast<size_t>(ch / 2) * cw + cw / 2) * 4];
+            std::printf("  crop of the left third: %dx%d, middle %d,%d,%d,%d\n", cw, ch, mid[0], mid[1], mid[2], mid[3]);
+            check(tex && cw == w / 3 && ch == h && pixel_near(mid, 64, 0, 0, 128),
+                  "crop: a screen region at native resolution, the 2D element in it");
+        } else {
+            check(false, "proxy exports the coverage / crop test hooks");
+        }
     }
     if (set_cursor) set_cursor(-1, -1);
     check(glGetError() == GL_NO_ERROR, "no GL errors in the HUD pipeline");
@@ -567,6 +590,18 @@ void world_marker_test(const Gl& gl, HDC dc, HMODULE proxy) {
 
 // The UI phase hook's signature, against the real HomeworldRM.exe (mapped as an image, not run). HW2VR_GAME_EXE is
 // set by tools/smoke-test.ps1 when the game is installed.
+// The VR panels' images, written next to the exe for a look (tools/ui_preview.py turns them into PNGs).
+void ui_render_test(HMODULE proxy) {
+    using PFNRENDERUI = int (*)(const wchar_t*);
+    auto render = reinterpret_cast<PFNRENDERUI>(GetProcAddress(proxy, "hw2vr_test_render_ui"));
+    wchar_t exe[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring dir(exe);
+    dir = dir.substr(0, dir.find_last_of(L"\\/"));
+    const int written = render ? render(dir.c_str()) : 0;
+    check(written == 4, "tablet and order wheel images render (ui_*.raw next to the smoke test)");
+}
+
 void ui_phase_signature_test(HMODULE proxy) {
     wchar_t exe[MAX_PATH] = {};
     if (!GetEnvironmentVariableW(L"HW2VR_GAME_EXE", exe, MAX_PATH)) {
@@ -798,6 +833,7 @@ int main() {
         depth_probe_test(gl, proxy);
         world_marker_test(gl, dc, proxy);
         ui_phase_signature_test(proxy);
+        ui_render_test(proxy);
     }
     if (const float offset = replay_test_offset(); offset != 0.0f) replay_pipeline_test(gl, dc, proxy, offset);
 

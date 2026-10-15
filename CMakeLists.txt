@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(hw2vr VERSION 0.8.0 LANGUAGES CXX RC)
+project(hw2vr VERSION 0.9.0 LANGUAGES CXX RC)
 
 # HomeworldRM.exe is 32-bit (docs/FINDINGS.md), so the proxy must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -28,10 +28,15 @@ add_library(hw2vr_proxy SHARED
     src/hud/hud_layer.cpp
     src/hud/hud_panel.cpp
     src/hud/marker_geometry.cpp
+    src/hud/screen_windows.cpp
     src/input/controls.cpp
     src/input/input_sim.cpp
     src/input/key_names.cpp
+    src/input/macro.cpp
+    src/input/order_wheel.cpp
     src/input/sprites.cpp
+    src/input/tablet.cpp
+    src/input/ui_canvas.cpp
     src/vr/openvr_session.cpp
     src/vr/overlay.cpp
     src/vr/vr_frame.cpp
@@ -64,6 +69,8 @@ target_link_libraries(hw2vr_smoke PRIVATE opengl32 gdi32 user32)
 add_dependencies(hw2vr_smoke hw2vr_proxy)
 
 # Pure per-eye camera maths (no GL / OpenVR).
-add_executable(hw2vr_math_test tests/math_test.cpp)
+add_executable(hw2vr_math_test tests/math_test.cpp src/input/ui_canvas.cpp)
 target_include_directories(hw2vr_math_test PRIVATE src)
+target_compile_definitions(hw2vr_math_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(hw2vr_math_test PRIVATE gdi32)
 target_compile_options(hw2vr_math_test PRIVATE /W4 /permissive- /utf-8)

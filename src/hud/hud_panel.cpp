@@ -25,6 +25,7 @@ Placement g_placement;
 vr::Overlay g_overlay;
 float g_anchor[16];
 bool g_placed = false;
+bool g_shown = false;  // Modal layout only
 float g_aspect = 1440.0f / 3440.0f;
 input::PanelGeometry g_geometry;
 
@@ -82,6 +83,7 @@ Placement centred(float distance, float degrees, float height) {
 
 void configure(const Settings& settings) {
     g_settings = settings;
+    g_placement = g_settings.defaults;
     if (movable()) load();
 }
 
@@ -91,7 +93,10 @@ bool start() {
     g_logged_size = false;
     if (movable()) load();  // pick up placement edits made while VR was off
     if (!g_overlay.create("hw2vr.panel", "Homeworld 2 UI", 1, g_settings.premultiplied)) return false;
-    if (movable())
+    if (g_settings.layout == Layout::Modal)
+        HW2VR_LOG("panel: menus and dialogs only, %.2f m ahead, %.2f m wide (%.0f degrees)", g_placement.distance,
+                  g_placement.width, g_placement.width / g_placement.distance * 180.0f / kPi);
+    else if (movable())
         HW2VR_LOG("panel: %s, %.2f m ahead, %.2f m side, %.2f m up, %.2f m wide (%.0f degrees), curvature %.3f",
                   solid() ? "console" : "movable panel", g_placement.distance, g_placement.side, g_placement.height,
                   g_placement.width, g_placement.width / g_placement.distance * 180.0f / kPi, g_placement.curvature);
@@ -101,12 +106,14 @@ bool start() {
     return true;
 }
 
-bool movable() { return g_settings.layout != Layout::Aligned; }
+bool movable() { return g_settings.layout == Layout::Console || g_settings.layout == Layout::Panel; }
+void set_shown(bool shown) { g_shown = shown; }
+bool shown() { return g_placed && (g_settings.layout != Layout::Modal || g_shown); }
 bool solid() { return g_settings.layout == Layout::Console; }
 bool bar_above() { return g_placed && g_geometry.centre.y < position(g_anchor).y - 0.05f; }
 
 void follow(const float camera_pose[16], const float hmd_pose[16], float tan_half_fov_x) {
-    if (movable()) return;
+    if (g_settings.layout != Layout::Aligned) return;
     // The panel is far closer than the (world-scaled) ships, so it sits at the head's position: leaning would
     // otherwise slide markers off their ships. Its orientation stays the game camera's.
     std::memcpy(g_anchor, camera_pose, sizeof g_anchor);
@@ -168,6 +175,7 @@ void place_flat_or_centred() {
 
 void update_texture(const float hmd_pose[16], float aspect) {
     if (!g_overlay.valid() || !g_placed) return;
+    if (!shown()) return g_overlay.hide();
     if (std::fabs(aspect - g_aspect) > 1e-4f) {
         g_aspect = aspect;
         apply();

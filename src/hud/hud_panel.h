@@ -22,7 +22,7 @@ struct Placement {
     float curvature = 0.18f;  // SteamVR overlay curvature: width / (2 pi radius); 0 = flat
 };
 
-enum class Layout { Console, Aligned, Panel };
+enum class Layout { Console, Aligned, Panel, Modal };  // Modal: Panel, shown only while set_shown(true)
 
 struct Settings {
     Layout layout = Layout::Console;
@@ -41,6 +41,8 @@ Placement centred(float distance, float degrees, float height);
 void configure(const Settings& settings);
 bool start();  // VR started: create the overlay
 bool movable();  // console or panel: placed by the player, grab bar shown
+void set_shown(bool shown);  // Modal layout: show the whole screen UI (a menu or dialog is up)
+bool shown();               // placed and visible (the laser can use it)
 bool solid();    // console: the whole surface is UI (the laser never points through it)
 bool bar_above();  // the grab bar goes above it (console, below eye level) rather than under it
 void stop();   // VR stopping: forget the overlay (vr::stop destroys it)

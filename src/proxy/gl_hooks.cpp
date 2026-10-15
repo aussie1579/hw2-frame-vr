@@ -15,6 +15,9 @@
 #include <windows.h>
 
 #include <cmath>
+#include <cstdio>
+#include <string>
+#include <vector>
 #include <cstring>
 #include <type_traits>
 #include <unordered_map>
@@ -24,6 +27,8 @@
 #include "common/mat4.h"
 #include "hud/hud_layer.h"
 #include "hud/marker_geometry.h"
+#include "input/tablet.h"
+#include "input/ui_canvas.h"
 #include "proxy/engine_hooks.h"
 #include "proxy/gl_api.h"
 #include "proxy/gl_record_hooks.h"
@@ -384,6 +389,33 @@ extern "C" __declspec(dllexport) unsigned hw2vr_test_find_ui_in(const wchar_t* e
     return hw2vr::engine::test_find_ui_in(exe_path);
 }
 extern "C" __declspec(dllexport) float hw2vr_test_last_marker_depth() { return hw2vr::hud::last_world_marker_depth(); }
+extern "C" __declspec(dllexport) float hw2vr_test_ui_coverage(float u0, float v0, float u1, float v1) {
+    const float r[4] = {u0, v0, u1, v1};
+    return hw2vr::hud::ui_coverage(r);
+}
+extern "C" __declspec(dllexport) unsigned hw2vr_test_crop(float u0, float v0, float u1, float v1, int* w, int* h) {
+    const float r[4] = {u0, v0, u1, v1};
+    return hw2vr::hud::crop_texture(0, r, w, h);
+}
+// The VR panels' images (tablet, order wheel) as raw files {int width, int height, BGRA rows top-down} in `dir`.
+extern "C" __declspec(dllexport) int hw2vr_test_render_ui(const wchar_t* dir) {
+    auto save = [&](const wchar_t* name, const hw2vr::sprites::Image& img) {
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, (std::wstring(dir) + L"\\" + name).c_str(), L"wb") || !f) return false;
+        std::fwrite(&img.width, 4, 1, f);
+        std::fwrite(&img.height, 4, 1, f);
+        std::fwrite(img.pixels.data(), 4, img.pixels.size(), f);
+        std::fclose(f);
+        return true;
+    };
+    const std::vector<std::wstring> orders = {L"Move", L"Attack", L"Guard", L"Dock", L"Stop", L"Repair", L"Harvest", L"Special"};
+    int ok = 0;
+    ok += save(L"ui_tablet.raw", hw2vr::tablet::test_render(-1, false));
+    ok += save(L"ui_tablet_hover.raw", hw2vr::tablet::test_render(4, true));
+    ok += save(L"ui_wheel.raw", hw2vr::ui::render_wheel(512, orders, L"cancel", -1));
+    ok += save(L"ui_wheel_attack.raw", hw2vr::ui::render_wheel(512, orders, L"cancel", 1));
+    return ok;
+}
 // The marker depth grid on its own: the scene framebuffer seen with the game's camera (identity eye), then the
 // view depth behind a screen rectangle. Returns -1 = empty space, -2 = no grid within 1 s, -3 = no scene seen.
 extern "C" __declspec(dllexport) float hw2vr_test_anchor_depth(float x0, float y0, float x1, float y1, int width,

@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <cstring>
 #include <string>
 
 #include "common/config.h"
@@ -9,7 +10,9 @@
 #include "hud/hud_layer.h"
 #include "hud/hud_panel.h"
 #include "input/controls.h"
+#include "hud/screen_windows.h"
 #include "input/key_names.h"
+#include "input/tablet.h"
 #include "vr/vr_input.h"
 #include "proxy/gl_hooks.h"
 #include "proxy/real_gl.h"
@@ -34,6 +37,9 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     if (panel.layout == hw2vr::panel::Layout::Console) {
         panel.defaults = hw2vr::panel::centred(cfg.console_distance, cfg.console_width_degrees, cfg.console_height);
         panel.state_path = dir + L"hw2vr_console.ini";
+    } else if (cfg.vr_hud_layout == 3) {  // tablet: the whole screen UI only for menus and dialogs, in front
+        panel.layout = hw2vr::panel::Layout::Modal;
+        panel.defaults = hw2vr::panel::centred(cfg.menu_distance, cfg.menu_width_degrees, 0.0f);
     } else {
         panel.defaults = hw2vr::panel::centred(cfg.panel_distance, cfg.panel_width_degrees, cfg.panel_height);
         panel.state_path = dir + L"hw2vr_panel.ini";
@@ -41,11 +47,28 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     panel.pixels_per_degree = cfg.panel_pixels_per_degree;
     panel.premultiplied = cfg.vr_hud_premultiplied;
     hw2vr::hud::set_world_markers(cfg.vr_world_markers);
+
+    const bool tablet_mode = cfg.vr_hud_layout == 3;
+    hw2vr::tablet::Settings tablet;
+    tablet.width = cfg.tablet_width;
+    tablet.lift = cfg.tablet_lift;
+    tablet.palm_axis = cfg.tablet_palm_axis;
+    tablet.always = cfg.tablet_always;
+    tablet.enabled = tablet_mode;
+    hw2vr::tablet::configure(tablet);
+    hw2vr::screens::Settings screens;
+    std::memcpy(screens.status_region, cfg.status_region, sizeof screens.status_region);
+    std::memcpy(screens.manager_region, cfg.manager_region, sizeof screens.manager_region);
+    std::memcpy(screens.modal_region, cfg.modal_region, sizeof screens.modal_region);
+    screens.manager_width = cfg.manager_width;
+    screens.enabled = tablet_mode;
+    hw2vr::screens::configure(screens);
     hw2vr::panel::configure(panel);
 
     hw2vr::controls::Settings c;
     c.stick_deadzone = cfg.stick_deadzone;
     c.camera_speed = cfg.camera_speed;
+    c.camera_curve = cfg.camera_curve;
     c.camera_invert_y = cfg.camera_invert_y;
     c.zoom_notches_per_second = cfg.zoom_notches_per_second;
     c.zoom_invert = cfg.zoom_invert;

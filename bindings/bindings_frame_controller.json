@@ -2,13 +2,17 @@
   "action_manifest_version": 0,
   "controller_type": "frame_controller",
   "name": "HW2 Frame VR default (Steam Frame)",
-  "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = right click, stick = zoom, A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad = build / research / launch / stop, View = tactical overlay.",
+  "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = order wheel, stick = zoom, A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, bumper = Ctrl, D-pad = build / research / launch / stop, View = tactical overlay.",
   "bindings": {
     "/actions/main": {
       "poses": [
         {
           "output": "/actions/main/in/pointer",
           "path": "/user/hand/right/pose/tip"
+        },
+        {
+          "output": "/actions/main/in/left_hand",
+          "path": "/user/hand/left/pose/openxr_grip"
         }
       ],
       "haptics": [

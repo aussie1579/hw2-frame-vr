@@ -27,6 +27,7 @@ BUTTONS = {
 
 actions = [
     {"name": "/actions/main/in/pointer", "type": "pose"},
+    {"name": "/actions/main/in/left_hand", "type": "pose"},
     {"name": "/actions/main/in/click", "type": "vector1"},
     {"name": "/actions/main/in/left_trigger", "type": "vector1"},
     {"name": "/actions/main/in/rightclick", "type": "boolean"},
@@ -40,9 +41,10 @@ localization = {
     "language_tag": "en_US",
     "/actions/main": "Homeworld 2 VR",
     "/actions/main/in/pointer": "Laser pointer (mouse cursor)",
+    "/actions/main/in/left_hand": "Left hand (the wrist tablet: palm towards you)",
     "/actions/main/in/click": "Left click: trigger pull (select, drag, grab the console bar)",
     "/actions/main/in/left_trigger": "Hotkey: Left trigger pull (key set in hw2vr.ini [buttons])",
-    "/actions/main/in/rightclick": "Right click (orders menu)",
+    "/actions/main/in/rightclick": "Order wheel (aiming into the world) / right click (on a game window)",
     "/actions/main/in/camera": "Camera orbit (right-mouse drag)",
     "/actions/main/in/zoom": "Mouse wheel (zoom)",
     "/actions/main/out/haptic": "Click haptic",
@@ -90,11 +92,12 @@ frame = {
     "action_manifest_version": 0,
     "controller_type": "frame_controller",
     "name": "HW2 Frame VR default (Steam Frame)",
-    "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = right click, stick = zoom, "
+    "description": "Right hand = pointer: laser aims, trigger (light pull) = click, bumper = order wheel, stick = zoom, "
                    "A move, B cancel, X focus, Y Sensors Manager. Left hand: stick orbits the camera, trigger = Shift, "
                    "bumper = Ctrl, D-pad = build / research / launch / stop, View = tactical overlay.",
     "bindings": {"/actions/main": {
-        "poses": [{"output": "/actions/main/in/pointer", "path": "/user/hand/right/pose/tip"}],
+        "poses": [{"output": "/actions/main/in/pointer", "path": "/user/hand/right/pose/tip"},
+                  {"output": "/actions/main/in/left_hand", "path": "/user/hand/left/pose/openxr_grip"}],
         "haptics": [{"output": "/actions/main/out/haptic", "path": "/user/hand/right/output/haptic"}],
         "sources": frame_sources,
     }},

@@ -3,8 +3,10 @@
 #include <cmath>
 #include <cstdio>
 #include <utility>
+#include <vector>
 
 #include "input/laser_math.h"
+#include "input/ui_canvas.h"
 #include "input/panel_geometry.h"
 #include "stereo/eye_math.h"
 
@@ -192,6 +194,23 @@ int main() {
         check(input::project_direction(game_proj, rotate(camera_inverse, fwd), 3440, 1440, &px, &py) &&
                   near(px, 1720.0f, 1e-3f) && near(py, 720.0f, 1e-3f),
               "laser along the recentred heading -> window centre");
+    }
+
+    // --- The order wheel's slices (0 = top, clockwise) and the tablet's hit test ---
+    check(ui::wheel_slice(0.0f, 0.8f, 8, ui::kWheelInner) == 0 && ui::wheel_slice(0.8f, 0.0f, 8, ui::kWheelInner) == 2 &&
+              ui::wheel_slice(0.0f, -0.8f, 8, ui::kWheelInner) == 4 && ui::wheel_slice(-0.8f, 0.0f, 8, ui::kWheelInner) == 6,
+          "wheel: top / right / bottom / left -> slices 0 / 2 / 4 / 6");
+    check(ui::wheel_slice(0.5f, 0.5f, 8, ui::kWheelInner) == 1 && ui::wheel_slice(-0.5f, 0.5f, 8, ui::kWheelInner) == 7,
+          "wheel: the diagonals between them -> slices 1 and 7");
+    check(ui::wheel_slice(0.1f, 0.1f, 8, ui::kWheelInner) == -1 && ui::wheel_slice(0.9f, 0.9f, 8, ui::kWheelInner) == -2,
+          "wheel: the centre -> -1, outside the rim -> -2");
+    {
+        std::vector<ui::Item> items = {{{0.0f, 0.0f, 0.2f, 0.1f}, L"label", ui::Kind::Label},
+                                       {{0.3f, 0.0f, 0.6f, 0.1f}, L"a", ui::Kind::Button},
+                                       {{0.3f, 0.2f, 0.6f, 0.3f}, L"b", ui::Kind::Button}};
+        check(ui::hit(items, 0.4f, 0.05f) == 1 && ui::hit(items, 0.4f, 0.25f) == 2 && ui::hit(items, 0.1f, 0.05f) == -1 &&
+                  ui::hit(items, 0.4f, 0.15f) == -1,
+              "panel hit test: buttons by their rectangles, labels and gaps never");
     }
 
     std::printf("%s: %d failure(s)\n", g_failures ? "FAILED" : "PASSED", g_failures);
