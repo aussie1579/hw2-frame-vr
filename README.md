@@ -22,7 +22,8 @@ SteamVR, and moves the game's 2D interface onto panels in VR space. The game its
 
 ## Install
 
-1. Download the release zip from [Releases](../../releases) and extract it anywhere.
+1. Download the release zip from [Releases](https://github.com/aussie1579/hw2-frame-vr/releases) and extract it
+   anywhere.
 2. Quit the game and run **`Install.cmd`**. It finds the game through Steam (pass `-GameDir "<...\HomeworldRM\Bin\Release>"`
    if it can't) and asks whether to apply the **Large Address Aware** patch. Answer **Y**: the square VR window needs
    more memory than the 32-bit game gets by default.
@@ -94,8 +95,11 @@ pwsh -File tools\launch-vr.ps1    # launch into VR
 pwsh -File tools\package.ps1      # build, test and zip a release into dist\
 ```
 
-Third-party code: [OpenVR](https://github.com/ValveSoftware/openvr) (BSD-3-Clause, `third_party/openvr`) and
-[stb_image](https://github.com/nothings/stb) (public domain / MIT, `third_party/stb`).
+## Licence
+
+MIT (see [`LICENSE`](LICENSE)). The third-party code keeps its own licence: [OpenVR](https://github.com/ValveSoftware/openvr)
+(BSD-3-Clause, `third_party/openvr`) and [stb_image](https://github.com/nothings/stb) (public domain / MIT,
+`third_party/stb`).
 
 ## Disclaimer
 

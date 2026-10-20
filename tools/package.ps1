@@ -30,7 +30,7 @@ Copy-Item (Join-Path $root 'config\hw2vr.ini') (Join-Path $stage 'config')
 Copy-Item (Join-Path $root 'bindings\*.json') (Join-Path $stage 'bindings')
 foreach ($s in 'install.ps1', 'uninstall.ps1', 'launch-vr.ps1', 'GameDir.ps1') { Copy-Item (Join-Path $PSScriptRoot $s) (Join-Path $stage 'tools') }
 Copy-Item (Join-Path $PSScriptRoot 'package\*.cmd') $stage
-Copy-Item (Join-Path $root 'README.md') $stage
+Copy-Item (Join-Path $root 'README.md'), (Join-Path $root 'LICENSE') $stage
 Copy-Item (Join-Path $root 'third_party\openvr\LICENSE') (Join-Path $stage 'licenses\OpenVR-LICENSE.txt')
 Set-Content (Join-Path $stage 'licenses\stb_image.txt') @'
 stb_image (https://github.com/nothings/stb) is compiled into opengl32.dll to decode the game's icons.
