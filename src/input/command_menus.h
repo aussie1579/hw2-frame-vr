@@ -8,9 +8,11 @@
 // the targeted orders with a click on what the laser pointed at when the menu opened.
 namespace hw2vr::menus {
 
-enum Id { kOrders, kTactics, kFormations, kProduction, kMenuCount };
+// The last three open with the menu modifier (left trigger) held: the game's ship abilities, which its command panel
+// only shows for ships that have them.
+enum Id { kOrders, kTactics, kFormations, kProduction, kAbilities, kSpecial, kCommands, kMenuCount };
 
-int parse(const wchar_t* name);  // "orders", "tactics", "formations", "production" -> Id; -1 if unknown
+int parse(const wchar_t* name);  // "orders", "tactics", ..., "commands" -> Id; -1 if unknown
 const char* name(int menu);
 
 // Adds the menus to radial:: (once; before radial::start, or for test renders).

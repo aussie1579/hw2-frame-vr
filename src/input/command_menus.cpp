@@ -81,13 +81,39 @@ const Def kMenus[kMenuCount] = {
       {L"Events", {HUD "hud_events.dds", 128, 2}, L"V"},
       {L"Objectives", {"ui\\newui\\taskbar\\objectiveicon.tga", 0, 0}, L"O"},
       {L"Sensors", {HUD "menu_ico_sensors4k.dds", 136, 1}, L"Space"}}},
+    // With the menu modifier held. The game's command panel buttons (ui\newui\taskbar\tb_commandpanel.lua) and their
+    // keys; an ability the selection doesn't have does nothing. Targeted ones put the game in their mode: click the
+    // target with the bumper.
+    {"abilities", L"ABILITIES",
+     {{L"Cloak", {CMD "cmd_ico_cloak.dds"}, L"C"},
+      {L"Defence field", {CMD "cmd_ico_defense.dds"}, L"T"},
+      {L"Sensor ping", {CMD "cmd_ico_ping.dds"}, L"X"},
+      {L"Drop mines", {CMD "cmd_ico_mines.dds"}, L"N"},
+      {L"EMP", {CMD "cmd_ico_pulse.dds"}, L"E"},
+      {L"Missile volley", {CMD "cmd_ico_missilevolley.dds"}, L"Ctrl+Shift+M"},
+      {L"Burst attack", {CMD "cmd_ico_burstattack.dds"}, L"Ctrl+Shift+B"},
+      {L"Speed burst", {CMD "cmd_ico_speedburst.dds"}, L"Ctrl+Shift+S"}}},
+    {"special", L"SPECIAL",
+     {{L"Capture", {CMD "cmd_ico_capture.dds"}, L"U"},
+      {L"Salvage", {CMD "cmd_ico_capture.dds"}, L"Ctrl+G"},
+      {L"Kamikaze", {CMD "cmd_ico_kamikaze.dds"}, L"Ctrl+Shift+K"},
+      {L"Drones", {CMD "cmd_ico_dronefrigate.dds"}, L"Ctrl+Shift+D"},
+      {L"Gravity well", {CMD "cmd_ico_gravewellgenerator.dds"}, L"Ctrl+Shift+Z"},
+      {L"Activate", {CMD "cmd_ico_specialattack.dds"}, L"Ctrl+Z"}}},
+    {"commands", L"COMMANDS",
+     {{L"Waypoint", {CMD "cmd_ico_waypoint.dds"}, L"W"},
+      {L"Rally point", {CMD "cmd_ico_rallypnt.dds"}, L"Ctrl+R"},
+      {L"Rally object", {CMD "cmd_ico_rallyobj.dds"}, L"Ctrl+P"},
+      {L"Parade", {}, L"Shift+P"},
+      {L"Retire", {CMD "cmd_ico_retire.dds"}, L"Ctrl+Shift+X"},
+      {L"Scuttle", {CMD "cmd_ico_scuttle.dds"}, L"Ctrl+Shift+E"}}},
 };
 
 #undef CMD
 #undef FORM
 #undef HUD
 
-int g_radial[kMenuCount] = {-1, -1, -1, -1};
+int g_radial[kMenuCount] = {-1, -1, -1, -1, -1, -1, -1};
 const Entry* g_last_manager = nullptr;  // the build / research / launch window last toggled
 
 }  // namespace

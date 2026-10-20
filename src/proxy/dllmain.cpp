@@ -103,7 +103,13 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
                       hw2vr::input::kButtons[i].ini_key);
             c.holds[i] = hw2vr::keys::Binding{};
         }
+        if (!hw2vr::keys::parse_binding(cfg.alts[i].c_str(), &c.alts[i]))
+            HW2VR_LOG("config: [buttons] %ls_alt = '%ls' has an unknown key name - unbound",
+                      hw2vr::input::kButtons[i].ini_key, cfg.alts[i].c_str());
     }
+    c.menu_modifier = -1;
+    for (int i = 0; i < hw2vr::input::kButtonCount; ++i)
+        if (_wcsicmp(cfg.menu_modifier.c_str(), hw2vr::input::kButtons[i].ini_key) == 0) c.menu_modifier = i;
     hw2vr::controls::configure(c);
 }
 

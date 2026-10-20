@@ -28,6 +28,8 @@ namespace hw2vr::controls {
 struct Settings {
     keys::Binding buttons[input::kButtonCount];
     keys::Binding holds[input::kButtonCount];  // held hold_ms: this instead (None = the button's binding as usual)
+    keys::Binding alts[input::kButtonCount];   // pressed with menu_modifier held: this instead (None = as usual)
+    int menu_modifier = input::kLeftTrigger;   // -1 = none
     int hold_ms = 600;
     float stick_deadzone = 0.2f;
     float camera_speed = 450.0f;   // mouse counts per second at full stick (right-drag orbit)

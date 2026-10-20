@@ -599,7 +599,7 @@ void ui_render_test(HMODULE proxy) {
     std::wstring dir(exe);
     dir = dir.substr(0, dir.find_last_of(L"\\/"));
     const int written = render ? render(dir.c_str()) : 0;
-    check(written == 6, "tablet and command menu images render (ui_*.raw next to the smoke test)");
+    check(written == 9, "tablet (2) and command menu (7) images render (ui_*.raw next to the smoke test)");
 }
 
 // --- Window-mode mouse: events go straight to the window procedure, real mouse messages are swallowed -------------

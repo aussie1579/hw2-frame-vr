@@ -142,6 +142,16 @@ Config load_config(const std::wstring& ini_path) {
         GetPrivateProfileStringW(L"buttons", hold_key.c_str(), input::kButtons[i].default_hold, buf,
                                  static_cast<DWORD>(std::size(buf)), ini_path.c_str());
         c.holds[i] = buf;
+        const std::wstring alt_key = std::wstring(input::kButtons[i].ini_key) + L"_alt";
+        GetPrivateProfileStringW(L"buttons", alt_key.c_str(), input::kButtons[i].default_alt, buf,
+                                 static_cast<DWORD>(std::size(buf)), ini_path.c_str());
+        c.alts[i] = buf;
+    }
+    {
+        wchar_t buf[32];
+        GetPrivateProfileStringW(L"buttons", L"menu_modifier", input::kDefaultMenuModifier, buf,
+                                 static_cast<DWORD>(std::size(buf)), ini_path.c_str());
+        c.menu_modifier = buf;
     }
     c.hold_ms = static_cast<int>(GetPrivateProfileIntW(L"buttons", L"hold_ms", c.hold_ms, ini_path.c_str()));
 

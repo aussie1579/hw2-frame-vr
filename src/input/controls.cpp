@@ -107,6 +107,9 @@ bool g_held[input::kButtonCount] = {};        // a held binding (keys, middle bu
 bool g_down_seen[input::kButtonCount] = {};   // the press was seen (holds are timed from it)
 long long g_pressed_at[input::kButtonCount] = {};
 bool g_hold_fired[input::kButtonCount] = {};
+// The menu modifier (left trigger) opened an alternative menu: its own key (Shift) is let go and stays up until it is
+// released, so the menu's command goes out on its own.
+bool g_modifier_used = false;
 
 bool g_dragging = false;
 float g_grab_distance = 0.0f;
@@ -485,7 +488,8 @@ void buttons(const ButtonContext& c) {
         const vrinput::ButtonState& b = c.st.buttons[i];
         const keys::Binding& bind = g_s.buttons[i];
         const keys::Binding& hold = g_s.holds[i];
-        if (g_held[i] && (!b.down || !c.allowed)) release_binding(i);
+        if (g_held[i] && (!b.down || !c.allowed || (i == g_s.menu_modifier && g_modifier_used))) release_binding(i);
+        if (i == g_s.menu_modifier && !b.down) g_modifier_used = false;
         if (b.released && g_menu_button == i) finish_menu(c.f);  // let go over a slice: that one
         if (b.pressed) {
             char desc[32], hold_desc[32];
@@ -513,7 +517,20 @@ void buttons(const ButtonContext& c) {
             if (seen && b.released && !g_hold_fired[i]) run_binding(c, i, bind, true);
             continue;
         }
-        if (b.pressed) run_binding(c, i, bind, false);
+        if (b.pressed) {
+            const keys::Binding& alt = g_s.alts[i];
+            const int mod = g_s.menu_modifier;
+            if (alt.kind != keys::Binding::None && mod >= 0 && mod != i && c.st.buttons[mod].down) {
+                g_modifier_used = true;
+                release_binding(mod);
+                char desc[32];
+                keys::describe(alt, desc, sizeof desc);
+                HW2VR_LOG("controls: %s with %s held -> %s", input::kButtons[i].name, input::kButtons[mod].name, desc);
+                run_binding(c, i, alt, false);
+            } else {
+                run_binding(c, i, bind, false);
+            }
+        }
     }
 }
 

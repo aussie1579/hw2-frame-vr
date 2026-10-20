@@ -80,6 +80,8 @@ struct Config {
     // holding it for hold_ms does instead (the button's own binding then fires on a short press, at the release).
     std::wstring buttons[input::kButtonCount];
     std::wstring holds[input::kButtonCount];
+    std::wstring alts[input::kButtonCount];      // [buttons] <button>_alt
+    std::wstring menu_modifier = input::kDefaultMenuModifier;
     int hold_ms = 600;
 
     // Hotkeys, all Ctrl+Shift+<key> ([hotkeys] in the ini takes key names, see common/hotkeys.h).

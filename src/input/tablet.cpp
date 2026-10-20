@@ -82,9 +82,9 @@ void build_layout() {
         add({x0 + static_cast<float>(col) * group_w + gap / 2, y0, x0 + static_cast<float>(col + 1) * group_w - gap / 2, y1},
             kGroups[i], ui::Kind::Button, kGroups[i]);
     }
-    add({x0, 0.79f, x1, 0.875f}, L"Hold the D-pad:  ▲ Orders   ◀ Tactics   ▶ Formations   ▼ Fleet",
-        ui::Kind::Label);
-    add({x0, 0.885f, x1, 0.97f}, L"Hold the left bumper and press a group to assign the selection", ui::Kind::Label);
+    add({x0, 0.778f, x1, 0.838f}, L"Hold the D-pad:  ▲ Orders   ◀ Tactics   ▶ Formations   ▼ Fleet", ui::Kind::Label);
+    add({x0, 0.843f, x1, 0.903f}, L"+ left trigger:  ▲ Abilities   ◀ Special   ▼ Commands", ui::Kind::Label);
+    add({x0, 0.912f, x1, 0.972f}, L"Hold the left bumper and press a group to assign the selection", ui::Kind::Label);
 }
 
 void refresh_items() {
