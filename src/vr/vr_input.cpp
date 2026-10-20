@@ -17,6 +17,7 @@ bool g_ready = false;
 ::vr::VRActionHandle_t g_buttons[input::kButtonCount] = {};
 State g_state;
 bool g_logged_inactive = false;
+int g_logged_pointer = -1;  // last logged laser state: 0 none, 1 tracked
 float g_press = 0.25f, g_release = 0.15f;  // trigger pull thresholds (hysteresis)
 
 std::string utf8(const std::wstring& w) {
@@ -106,6 +107,7 @@ bool init(const std::wstring& manifest_path) {
     }
     g_state = State{};
     g_logged_inactive = false;
+    g_logged_pointer = -1;
     g_ready = true;
     HW2VR_LOG("vrinput: actions loaded from %ls", manifest_path.c_str());
     return true;
@@ -133,6 +135,12 @@ const State& update() {
         g_logged_inactive = true;
     }
     if (pose.bActive) g_logged_inactive = false;
+    if (static_cast<int>(g_state.pointer_valid) != g_logged_pointer) {
+        g_logged_pointer = g_state.pointer_valid ? 1 : 0;
+        HW2VR_LOG("vrinput: laser %s (action %s, pose %s, tracking result %d)", g_state.pointer_valid ? "tracked" : "lost",
+                  pose.bActive ? "active" : "inactive", pose.pose.bPoseIsValid ? "valid" : "invalid",
+                  static_cast<int>(pose.pose.eTrackingResult));
+    }
     ::vr::InputPoseActionData_t left{};
     in->GetPoseActionDataForNextFrame(g_left_hand, ::vr::TrackingUniverseSeated, &left, sizeof left,
                                       ::vr::k_ulInvalidInputValueHandle);

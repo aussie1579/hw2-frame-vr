@@ -20,6 +20,9 @@ struct Settings {
     bool enabled = true;  // [vr] hud = tablet
     float status_region[4] = {0.75f, 0.0f, 1.0f, 0.07f};    // screen uv {u0, v0, u1, v1}, top-left origin
     float manager_region[4] = {0.855f, 0.06f, 1.0f, 0.86f};
+    // The same on a square game screen (a 2880x2880 VR window): the game lays its UI out differently there.
+    float status_region_square[4] = {0.75f, 0.0f, 1.0f, 0.035f};
+    float manager_region_square[4] = {0.852f, 0.028f, 1.0f, 0.965f};
     float modal_region[4] = {0.3f, 0.3f, 0.7f, 0.7f};
     float manager_width = 0.30f;  // metres
 };
@@ -33,6 +36,8 @@ void before_swap();
 // After WaitGetPoses: place the visible windows (status strip on the tablet, manager where it was pinned).
 void update(const float hmd_pose[16]);
 bool modal_open();
+// Screen mode (the whole screen is on the panel): the cut-out windows are hidden and not tracked.
+void set_suspended(bool on);
 
 // The right-click menu. watch: the right button went down on the world at screen uv (u, v), the laser along
 // origin/dir - UI appearing near there from now on is the menu. cancel: the press became a camera turn.

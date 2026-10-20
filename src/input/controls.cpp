@@ -75,9 +75,11 @@ int g_cursor_x = INT_MIN, g_cursor_y = INT_MIN;  // last client position we put 
 
 // Bumper = the left mouse button. A press holds the cursor where it went down until the laser moves past
 // drag_degrees, so a click never turns into a tiny drag (box select / camera nudge); further than that it drags.
+// Never in the first click_ms: pressing the bumper jolts the controller by a few degrees.
 bool g_left_down = false;
 bool g_sticky = false;
 Vec3 g_press_dir;
+long long g_press_at = 0;
 
 // Trigger = the right mouse button. On the world a tap is the game's right click (its pop-up menu); held and moved
 // past swivel_degrees, the laser's turning becomes mouse motion with the button down - the game's own right-drag
@@ -265,6 +267,7 @@ void left_button(const vrinput::ButtonState& b, bool can_press, const Vec3& dir)
         g_left_down = true;
         g_sticky = true;
         g_press_dir = dir;
+        g_press_at = now_ms();
         if (g_s.haptics) vrinput::pulse(0.01f, 0.4f);
     }
     if (!b.down && g_left_down) {
@@ -547,6 +550,21 @@ void place_cursor(const Frame& f, Aim aim, const Vec3& eye, Vec3* world_point) {
     g_cursor.show();
 }
 
+// Every 5 s: what the laser is doing (for reading a test session's log afterwards).
+void log_status(const Frame& f, const vrinput::State& st, Aim aim, bool foreground) {
+    static long long next = 0;
+    const long long now = now_ms();
+    if (now < next) return;
+    next = now + 5000;
+    static const char* const kAim[] = {"nothing", "panel", "world", "grab bar", "tablet", "close tab", "game window", "menu"};
+    int x = 0, y = 0;
+    cursor_position(f, &x, &y);
+    HW2VR_LOG("controls: laser %s, on %s, beam %s, game %s, mouse %s, cursor (%d, %d)",
+              st.pointer_valid ? "tracked" : "NOT tracked", kAim[static_cast<int>(aim)], g_beam.visible() ? "shown" : "hidden",
+              foreground ? "in front" : "in the BACKGROUND (input paused)", inputsim::window_mode() ? "to the window" : "real cursor",
+              x, y);
+}
+
 }  // namespace
 
 void configure(const Settings& settings) { g_s = settings; }
@@ -603,6 +621,7 @@ void stop() {
     if (!g_started) return;
     release_mouse();
     release_keys();
+    inputsim::set_window_mode(nullptr, false);
     macro::clear();
     radial::stop();
     tablet::stop();
@@ -634,9 +653,12 @@ Requests update(const Frame& f) {
                         GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN),
                         GetSystemMetrics(SM_YVIRTUALSCREEN) + GetSystemMetrics(SM_CYVIRTUALSCREEN)};
         const bool fits = tl.x >= desk.left && tl.y >= desk.top && br.x <= desk.right && br.y <= desk.bottom;
+        const bool window_mode = g_s.mouse_mode == 1 || (g_s.mouse_mode == 0 && !fits);
+        inputsim::set_window_mode(f.window, window_mode);
         HW2VR_LOG("controls: game client area %dx%d at (%ld, %ld) on a desktop (%ld, %ld)-(%ld, %ld)%s", f.client_w,
                   f.client_h, tl.x, tl.y, desk.left, desk.top, desk.right, desk.bottom,
-                  fits ? "" : " - PART OF IT IS OFF-SCREEN: the laser can't reach UI there (use borderless/fullscreen)");
+                  fits || inputsim::window_mode() ? "" : " - PART OF IT IS OFF-SCREEN: the laser can't reach UI there "
+                                                          "([controls] mouse = window)");
         g_logged_window = true;
     }
     const Vec3 eye = position(f.hmd);
@@ -781,6 +803,7 @@ Requests update(const Frame& f) {
         }
     }
     g_prev_aim = aim;
+    log_status(f, st, aim, foreground);
 
     // Our own panels: the bumper or the trigger presses a tablet button or picks a menu's slice.
     const bool ui_press = foreground && (st.bumper.pressed || st.trigger.pressed);
@@ -796,7 +819,11 @@ Requests update(const Frame& f) {
     right_button(f, st.trigger, can_click && !g_left_down, aim, st.pointer_valid, origin, dir);
 
     // A held left button starts dragging once the laser has moved far enough from where it went down.
-    if (g_sticky && st.pointer_valid && dot(dir, g_press_dir) < std::cos(g_s.drag_degrees * kPi / 180.0f)) g_sticky = false;
+    if (g_sticky && st.pointer_valid && now_ms() - g_press_at >= g_s.click_ms &&
+        dot(dir, g_press_dir) < std::cos(g_s.drag_degrees * kPi / 180.0f)) {
+        g_sticky = false;
+        HW2VR_LOG("controls: bumper held and moved - dragging (box select)");
+    }
 
     const bool free_hands = foreground && !busy && !g_left_down && !radial::is_open();
     orbit(f, st, free_hands && !g_right.down);

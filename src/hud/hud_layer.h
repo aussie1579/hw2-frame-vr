@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <vector>
 
 // The game draws its HUD into its own framebuffer (fbo 35 on build 12653478), cleared to (0,0,0,1) and blended so
@@ -23,6 +25,14 @@ bool is_hud_fbo(unsigned fbo);
 
 void set_capture(bool enabled, bool premultiplied);
 void set_target_size(int width, int height);  // the game's HUD is window-sized
+float screen_aspect();                         // width / height of the game's screen (0 before the first frame)
+// Screen mode (menus, loading screens - no 3D world): nothing is redirected, the game draws its screen as usual, and
+// capture_screen() (before the swap) copies the finished screen, opaque, into the overlay texture for the panel.
+void set_screen_mode(bool on);
+void capture_screen();
+// Debugging (Ctrl+Shift+F6 in VR): saves the overlay texture (the captured screen UI / screen) and the panel's
+// filtered image as hw2vr_overlay.tga / hw2vr_panel.tga in `dir`.
+void debug_dump(const std::wstring& dir);
 void set_window(void* hwnd);                  // the game window (cursor position for the cursor texture)
 // Called by the glBindFramebuffer hook before the game switches draw framebuffer.
 void on_draw_framebuffer_change(unsigned from, unsigned to);
@@ -100,5 +110,6 @@ struct TestState {
 };
 TestState test_state();
 float last_world_marker_depth();
+unsigned world_marker_jumps_held();  // marker depth jumps held back (hud/marker_memory.h) so far
 
 }  // namespace hw2vr::hud

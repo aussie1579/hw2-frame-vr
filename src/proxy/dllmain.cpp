@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <cstring>
+#include <cwchar>
 #include <string>
 
 #include "common/config.h"
@@ -59,6 +60,8 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     hw2vr::screens::Settings screens;
     std::memcpy(screens.status_region, cfg.status_region, sizeof screens.status_region);
     std::memcpy(screens.manager_region, cfg.manager_region, sizeof screens.manager_region);
+    std::memcpy(screens.status_region_square, cfg.status_region_square, sizeof screens.status_region_square);
+    std::memcpy(screens.manager_region_square, cfg.manager_region_square, sizeof screens.manager_region_square);
     std::memcpy(screens.modal_region, cfg.modal_region, sizeof screens.modal_region);
     screens.manager_width = cfg.manager_width;
     screens.enabled = tablet_mode;
@@ -73,6 +76,7 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     c.zoom_notches_per_second = cfg.zoom_notches_per_second;
     c.zoom_invert = cfg.zoom_invert;
     c.click_freeze_ms = cfg.click_freeze_ms;
+    c.click_ms = cfg.click_ms;
     c.drag_degrees = cfg.drag_degrees;
     c.swivel_degrees = cfg.swivel_degrees;
     c.swivel_speed = cfg.swivel_speed;
@@ -84,6 +88,7 @@ void configure_panel_and_controls(const hw2vr::Config& cfg, const std::wstring& 
     c.filter_beta = cfg.filter_beta;
     c.haptics = cfg.haptics;
     c.show_beam = cfg.show_beam;
+    c.mouse_mode = cfg.mouse_mode;
     c.cursor_distance = cfg.cursor_distance;
     for (int i = 0; i < hw2vr::input::kButtonCount; ++i) {
         if (!hw2vr::keys::parse_binding(cfg.buttons[i].c_str(), &c.buttons[i]))
@@ -114,13 +119,31 @@ bool init(HMODULE self) {
     // instead of crashing on the first GL call.
     if (!hw2vr::proxy::load_real_opengl32() || !hw2vr::proxy::init_hooks()) return false;
 
+    // 2 GB (not Large Address Aware) is tight for a large VR window; tools\install.ps1 -LargeAddressAware patches the
+    // exe, and a Steam update or file check undoes it.
+    const auto* image = reinterpret_cast<const BYTE*>(GetModuleHandleW(nullptr));
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(image + reinterpret_cast<const IMAGE_DOS_HEADER*>(image)->e_lfanew);
+    const bool laa = (nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) != 0;
+    HW2VR_LOG("game: %s", laa ? "Large Address Aware (4 GB of address space)"
+                              : "2 GB of address space (not Large Address Aware) - a window bigger than 3440x1440 in VR "
+                                "can run out of memory: tools\\install.ps1 -LargeAddressAware");
+
+    // -hw2vr on the game's command line: VR starts with the game (the menus appear in the headset).
+    const bool launch_vr = std::wcsstr(GetCommandLineW(), L" -hw2vr") != nullptr;
+    if (launch_vr) HW2VR_LOG("vr: -hw2vr on the command line - VR starts with the game");
+
     hw2vr::stereo::configure_spike(cfg.spike_yaw_degrees, cfg.spike_offset_x, cfg.spike_start_mode, cfg.key_spike);
     hw2vr::vrframe::Settings vr;
-    vr.autostart = cfg.vr_autostart;
+    vr.autostart = cfg.vr_autostart || launch_vr;
     vr.world_scale = cfg.vr_world_scale;
     vr.hud_premultiplied = cfg.vr_hud_premultiplied;
     vr.sync_stereo = cfg.vr_sync_stereo;
     vr.fit_window = cfg.vr_fit_window;
+    vr.turn_game_camera = cfg.vr_turn_game_camera;
+    vr.game_camera_deadzone = cfg.vr_game_camera_deadzone;
+    vr.game_fov = cfg.vr_game_fov;
+    hw2vr::proxy::set_lens_flares_in_vr(cfg.vr_lens_flares);
+    vr.camera_turn_test = cfg.debug_camera_turn_test;
     vr.key_toggle = cfg.key_vr_toggle;
     vr.key_recentre = cfg.key_recentre;
     vr.key_scale_up = cfg.key_scale_up;

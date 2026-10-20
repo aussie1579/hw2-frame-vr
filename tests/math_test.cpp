@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "hud/marker_memory.h"
 #include "input/laser_math.h"
 #include "input/ui_canvas.h"
 #include "input/panel_geometry.h"
@@ -80,6 +81,97 @@ int main() {
     stereo::eye_from_game_camera(head, recentre, I, 100.0f, e);
     mat4::rigid_inverse(pitch, b);
     check(near16(e, b), "recentred: only the pitch remains (no yaw, no translation)");
+
+    // The game camera turn follows the head's yaw and pitch, without roll
+    {
+        float roll[16], head_yp[16], head_ypr[16], turn[16], fwd_t[4], fwd_h[4];
+        const float forward[4] = {0, 0, -1, 0};
+        float z[16];
+        mat4::identity(z);
+        const float rc = std::cos(20 * kDeg), rs = std::sin(20 * kDeg);
+        z[0] = rc, z[1] = rs, z[4] = -rs, z[5] = rc;  // 20 deg roll about Z
+        std::memcpy(roll, z, sizeof z);
+        mat4::multiply(yaw, pitch, head_yp);       // 30 deg yaw, 10 deg pitch
+        mat4::multiply(head_yp, roll, head_ypr);
+        stereo::game_camera_turn(head_ypr, turn);
+        check(near16(turn, head_yp), "camera turn = the head's yaw and pitch, roll dropped");
+        transform(turn, forward, fwd_t);
+        transform(head_ypr, forward, fwd_h);
+        check(near(fwd_t[0], fwd_h[0], 1e-4f) && near(fwd_t[1], fwd_h[1], 1e-4f) && near(fwd_t[2], fwd_h[2], 1e-4f),
+              "camera turn: the turned game camera looks where the head looks");
+
+        // Looking straight up (90 deg pitch) after a 120 deg yaw: the heading comes from the up vector
+        float y120[16], up90[16], head_up[16], expected[16];
+        mat4::rotation_y(120 * kDeg, y120);
+        mat4::rotation_x(90 * kDeg, up90);
+        mat4::multiply(y120, up90, head_up);
+        stereo::game_camera_turn(head_up, turn);
+        mat4::multiply(y120, up90, expected);
+        check(near16(turn, expected), "camera turn: straight up keeps the heading (120 deg)");
+
+        // Turning the game camera and placing the eye relative to the turned camera leaves the picture unchanged:
+        // eye(turned camera) * turn^-1 * view == eye(camera) * view
+        float game_pose[16], game_inv[16], e_turned[16], e_plain[16], turn_inv[16], lhs[16], tmp[16];
+        mat4::translation(0.1f, 1.2f, -0.3f, t);
+        mat4::multiply(t, head_ypr, c);  // head pose (seated)
+        mat4::identity(game_pose);       // recentred at the seated origin
+        stereo::game_camera_turn(c, turn);
+        mat4::multiply(game_pose, turn, tmp);
+        mat4::rigid_inverse(tmp, game_inv);
+        stereo::eye_from_game_camera(c, game_inv, eye_to_head, 100.0f, e_turned);
+        stereo::eye_from_game_camera(c, I, eye_to_head, 100.0f, e_plain);
+        mat4::rigid_inverse(turn, turn_inv);
+        mat4::multiply(e_turned, turn_inv, lhs);
+        check(near16(lhs, e_plain), "camera turn: eye placement compensates it exactly (same picture)");
+    }
+
+    // A marker rectangle mapped into the camera the depth grid was traced from (turned 10 deg to the right of it)
+    {
+        const float gp[4] = {0.5978f, 1.428f, 0.0f, 0.0f};
+        const float rect[4] = {0.45f, 0.45f, 0.55f, 0.55f};
+        float rot[16], out[4];
+        mat4::identity(rot);
+        check(stereo::turn_screen_rect(rect, gp, rot, out) && near(out[0], 0.45f) && near(out[3], 0.55f),
+              "turn_screen_rect: no turn, same rectangle");
+        mat4::rotation_y(10 * kDeg, rot);  // straight ahead now = 10 deg to the left for the grid's camera
+        const float expected = (0.5978f * -std::tan(10 * kDeg) + 1.0f) * 0.5f;
+        check(stereo::turn_screen_rect(rect, gp, rot, out) && near(0.5f * (out[0] + out[2]), expected, 2e-3f) &&
+                  near(0.5f * (out[1] + out[3]), 0.5f, 1e-3f),
+              "turn_screen_rect: a 10 deg turn moves the rectangle where the other camera sees it");
+    }
+
+    // World marker depth memory: a marker whose grid depth flips between two values each frame stays put; noise is
+    // eased in; a real change is taken once it has held for 3 frames; a frame the grid misses keeps the depth.
+    {
+        hud::MarkerMemory mem;
+        const Vec3 dir = normalize(Vec3{0.1f, 0.0f, -1.0f});
+        const float size = 0.01f;
+        float z = mem.resolve(dir, size, true, 2000.0f, 9999.0f);
+        mem.end_frame();
+        bool steady = near(z, 2000.0f);
+        for (int i = 0; i < 6; ++i) {  // flips between the ship and something far behind it
+            z = mem.resolve(dir, size, true, (i & 1) ? 2000.0f : 8000.0f, 9999.0f);
+            mem.end_frame();
+            steady = steady && near(z, 2000.0f, 1.0f);
+        }
+        check(steady, "marker memory: a depth flipping between two values every frame stays steady");
+        z = mem.resolve(dir, size, true, 2100.0f, 9999.0f);
+        mem.end_frame();
+        check(z > 2000.0f && z < 2100.0f, "marker memory: a small change is eased in");
+        const float before = z;
+        z = mem.resolve(dir, size, false, 0.0f, 9999.0f);
+        mem.end_frame();
+        check(near(z, before), "marker memory: a frame the grid misses keeps the depth (not the fallback)");
+        float zs[3];
+        for (float& v : zs) {
+            v = mem.resolve(normalize(Vec3{0.1005f, 0.0f, -1.0f}), size, true, 5000.0f, 9999.0f);  // head moved a bit
+            mem.end_frame();
+        }
+        check(near(zs[0], before) && near(zs[1], before) && near(zs[2], 5000.0f),
+              "marker memory: a real change is taken once it has held for 3 frames");
+        z = mem.resolve(normalize(Vec3{-0.5f, 0.0f, -1.0f}), size, false, 0.0f, 1234.0f);
+        check(near(z, 1234.0f), "marker memory: a new marker the grid misses gets the fallback");
+    }
 
     // Head movement after recentring is scaled by world scale
     mat4::translation(0.2f + 0.5f, 1.1f, -0.4f, t);  // lean 0.5 m to the right of the recentre point

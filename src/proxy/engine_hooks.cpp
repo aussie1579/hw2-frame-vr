@@ -3,21 +3,33 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
 #include "common/log.h"
+#include "common/mat4.h"
 
 // Written by the stub below; read by the proxy on the render thread.
 extern "C" {
 volatile unsigned char g_hw2vr_ui_screen_phase = 0;
 void* g_hw2vr_ui_in_target = nullptr;  // rnd_RunPhase
+void* g_hw2vr_camera_update_target = nullptr;  // the game's camera update
+void __cdecl hw2vr_camera_updated(float* camera);
 }
 
 namespace hw2vr::engine {
 namespace {
 
 bool g_installed = false;
+bool g_camera_hooked = false;
+bool g_turn_on = false;
+float g_turn_inverse[16];
+unsigned g_camera_updates = 0, g_camera_rejected = 0, g_camera_calls = 0;
+float g_fov = 0.0f;             // override, degrees (0 = none)
+float g_game_fov = 0.0f;        // the game's own, saved while overridden
+float* g_fov_camera = nullptr;  // where it was saved
+constexpr int kFov = 0x124 / 4;
 
 // Replaces the patched call's target: raise the flag, then continue into rnd_RunPhase with the stack untouched
 // (the caller's return address and phase-id argument are still where it put them).
@@ -25,6 +37,18 @@ __declspec(naked) void ui_in_stub() {
     __asm {
         mov byte ptr [g_hw2vr_ui_screen_phase], 1
         jmp dword ptr [g_hw2vr_ui_in_target]
+    }
+}
+
+// Replaces the camera update's call: run it (thiscall, ecx = the camera), then turn the matrices it built. The pushed
+// camera pointer survives the call (it takes no stack arguments) and is the cdecl argument of the second call.
+__declspec(naked) void camera_update_stub() {
+    __asm {
+        push ecx
+        call dword ptr [g_hw2vr_camera_update_target]
+        call hw2vr_camera_updated
+        add esp, 4
+        ret
     }
 }
 
@@ -61,7 +85,109 @@ uint32_t read32(const uint8_t* p) {
     return v;
 }
 
+// Points a `call rel32` at `to`.
+bool redirect_call(uint8_t* call, const void* to) {
+    const int32_t rel = static_cast<int32_t>(reinterpret_cast<uintptr_t>(to) - (reinterpret_cast<uintptr_t>(call) + 5));
+    DWORD old = 0;
+    if (!VirtualProtect(call + 1, 4, PAGE_EXECUTE_READWRITE, &old)) return false;
+    std::memcpy(call + 1, &rel, 4);
+    VirtualProtect(call + 1, 4, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), call, 5);
+    return true;
+}
+
+// The game's view matrix: rotation + translation. Anything else is left alone.
+bool rigid(const float m[16]) {
+    if (std::fabs(m[3]) > 1e-3f || std::fabs(m[7]) > 1e-3f || std::fabs(m[11]) > 1e-3f || std::fabs(m[15] - 1.0f) > 1e-3f)
+        return false;
+    for (int c = 0; c < 3; ++c) {
+        const float* v = m + c * 4;
+        if (std::fabs(v[0] * v[0] + v[1] * v[1] + v[2] * v[2] - 1.0f) > 1e-2f) return false;
+    }
+    return true;
+}
+
+constexpr int kMaxCameraCalls = 4;
+
+// The camera update (FUN_0078bf32 on build 12653478) starts `sub esp,64h; push ebx; mov ebx,ecx; push esi; push edi;
+// cmp byte ptr [ebx+190h],1` and pushes the "roll_blend" string's address (its roll blend name) in its first 0x200
+// bytes. Returns it and fills `calls` with every `call rel32` to it in the code section (*n_calls counts them all).
+const uint8_t* find_camera_update(const uint8_t* image_base, uint8_t** calls, int* n_calls) {
+    *n_calls = 0;
+    Section code{}, image{};
+    if (!image_sections(image_base, &code, &image)) return nullptr;
+    static const uint8_t kPrologue[] = {0x83, 0xEC, 0x64, 0x53, 0x8B, 0xD9, 0x56, 0x57, 0x80, 0xBB, 0x90, 0x01, 0x00, 0x00, 0x01};
+    static const char kRoll[] = "roll_blend";
+    const uint8_t* const image_end = image.begin + image.size;
+    const uint8_t* const code_end = code.begin + code.size;
+    const uint8_t* fn = nullptr;
+    for (const uint8_t* p = find(code.begin, code_end, kPrologue, sizeof kPrologue); p && !fn;
+         p = find(p + 1, code_end, kPrologue, sizeof kPrologue)) {
+        for (const uint8_t* str = find(image.begin, image_end, kRoll, sizeof kRoll); str && !fn;
+             str = find(str + 1, image_end, kRoll, sizeof kRoll)) {
+            uint8_t push[5] = {0x68};
+            const uint32_t str_addr = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(str));
+            std::memcpy(push + 1, &str_addr, 4);
+            if (find(p, (std::min)(p + 0x200, code_end), push, sizeof push)) fn = p;
+        }
+    }
+    if (!fn) return nullptr;
+    for (const uint8_t* q = code.begin; q + 5 <= code_end; ++q) {
+        if (*q != 0xE8) continue;
+        const uintptr_t target = reinterpret_cast<uintptr_t>(q) + 5 + static_cast<int32_t>(read32(q + 1));
+        if (target != reinterpret_cast<uintptr_t>(fn)) continue;
+        if (*n_calls < kMaxCameraCalls) calls[*n_calls] = const_cast<uint8_t*>(q);
+        ++*n_calls;
+    }
+    return fn;
+}
+
+void install_camera(const uint8_t* base) {
+    uint8_t* calls[kMaxCameraCalls] = {};
+    int n = 0;
+    const uint8_t* fn = find_camera_update(base, calls, &n);
+    if (!fn || n < 1 || n > kMaxCameraCalls) {
+        HW2VR_LOG("engine: the camera update wasn't found (%s, %d calls) - the game camera won't turn with the head",
+                  fn ? "function found" : "no function", n);
+        return;
+    }
+    g_hw2vr_camera_update_target = const_cast<uint8_t*>(fn);
+    int redirected = 0;
+    for (int i = 0; i < n; ++i) redirected += redirect_call(calls[i], &camera_update_stub) ? 1 : 0;
+    const unsigned rva = static_cast<unsigned>(reinterpret_cast<uintptr_t>(fn) - reinterpret_cast<uintptr_t>(base));
+    HW2VR_LOG("engine: camera turn hook installed - camera update at exe+0x%X (Ghidra 0x%08X), %d of %d call(s) "
+              "redirected", rva, rva + 0x400000, redirected, n);
+    g_camera_hooked = redirected > 0;
+}
+
 }  // namespace
+
+// After every camera update: the view (camera +0x04) and the sky's rotation (+0x44) turned in view space,
+// view' = turn^-1 * view. The eye position doesn't change; the culling planes and everything else come after.
+void turn_camera(float* camera) {
+    ++g_camera_calls;
+    // The field of view is kept, not rebuilt by the update: set it here and the next update (and the renderer)
+    // project with it.
+    if (g_fov > 0.0f && camera[kFov] != g_fov) {
+        if (!g_fov_camera) g_fov_camera = camera, g_game_fov = camera[kFov];
+        camera[kFov] = g_fov;
+    } else if (g_fov <= 0.0f && g_fov_camera == camera) {
+        camera[kFov] = g_game_fov;
+        g_fov_camera = nullptr;
+    }
+    if (!g_turn_on) return;
+    float* const mats[2] = {camera + 1, camera + 0x11};
+    if (!rigid(mats[0]) || !rigid(mats[1])) {
+        if (g_camera_rejected++ == 0) HW2VR_LOG("engine: a camera update built a matrix that isn't a rotation - not turned");
+        return;
+    }
+    for (float* m : mats) {
+        float out[16];
+        mat4::multiply(g_turn_inverse, m, out);
+        std::memcpy(m, out, sizeof out);
+    }
+    ++g_camera_updates;
+}
 
 // The call instruction that runs PHASE_UIIn in a mapped HomeworldRM.exe image, or nullptr.
 uint8_t* find_ui_in_call(const uint8_t* image_base) {
@@ -93,9 +219,9 @@ uint8_t* find_ui_in_call(const uint8_t* image_base) {
     return call;
 }
 
-bool install() {
-    if (g_installed) return true;
-    const auto* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+namespace {
+
+bool install_ui(const uint8_t* base) {
     Section code{}, image{};
     uint8_t* call = find_ui_in_call(base);
     if (!call || !image_sections(base, &code, &image)) {
@@ -110,15 +236,10 @@ bool install() {
     }
     g_hw2vr_ui_in_target = reinterpret_cast<void*>(target);
 
-    const int32_t rel = static_cast<int32_t>(reinterpret_cast<uintptr_t>(&ui_in_stub) - (reinterpret_cast<uintptr_t>(call) + 5));
-    DWORD old = 0;
-    if (!VirtualProtect(call + 1, 4, PAGE_EXECUTE_READWRITE, &old)) {
+    if (!redirect_call(call, &ui_in_stub)) {
         HW2VR_LOG("engine: VirtualProtect failed (%lu) - UI phase hook off", GetLastError());
         return false;
     }
-    std::memcpy(call + 1, &rel, 4);
-    VirtualProtect(call + 1, 4, old, &old);
-    FlushInstructionCache(GetCurrentProcess(), call, 5);
     const uintptr_t image_base = reinterpret_cast<uintptr_t>(image.begin);
     HW2VR_LOG("engine: UI phase hook installed - PHASE_UIIn call at exe+0x%X (Ghidra 0x%08X), rnd_RunPhase at exe+0x%X",
               static_cast<unsigned>(reinterpret_cast<uintptr_t>(call) - image_base),
@@ -128,11 +249,33 @@ bool install() {
     return true;
 }
 
+}  // namespace
+
+bool install() {
+    static bool tried = false;
+    if (tried) return g_installed;
+    tried = true;
+    const auto* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+    install_camera(base);
+    return install_ui(base);
+}
+
 bool installed() { return g_installed; }
 bool screen_ui_phase() { return g_hw2vr_ui_screen_phase != 0; }
 void frame_end() { g_hw2vr_ui_screen_phase = 0; }
 void set_screen_ui_phase(bool on) { g_hw2vr_ui_screen_phase = on ? 1 : 0; }
 void set_test_installed(bool on) { g_installed = on; }
+
+bool camera_hook_installed() { return g_camera_hooked; }
+unsigned camera_updates() { return g_camera_updates; }
+unsigned camera_calls() { return g_camera_calls; }
+
+void set_camera_fov(float degrees) { g_fov = degrees > 1.0f && degrees < 170.0f ? degrees : 0.0f; }
+
+void set_camera_turn(const float* turn) {
+    g_turn_on = turn != nullptr;
+    if (turn) mat4::rigid_inverse(turn, g_turn_inverse);
+}
 
 unsigned test_find_ui_in(const wchar_t* exe_path) {
     HMODULE m = LoadLibraryExW(exe_path, nullptr, DONT_RESOLVE_DLL_REFERENCES);
@@ -144,4 +287,24 @@ unsigned test_find_ui_in(const wchar_t* exe_path) {
     return rva;
 }
 
+unsigned test_find_camera_update(const wchar_t* exe_path, int* calls) {
+    *calls = 0;
+    HMODULE m = LoadLibraryExW(exe_path, nullptr, DONT_RESOLVE_DLL_REFERENCES);
+    if (!m) return 0;
+    const auto* base = reinterpret_cast<const uint8_t*>(m);
+    uint8_t* found[kMaxCameraCalls] = {};
+    const uint8_t* fn = find_camera_update(base, found, calls);
+    const unsigned rva = fn ? static_cast<unsigned>(fn - base) : 0;
+    FreeLibrary(m);
+    return rva;
+}
+
+void test_turn_camera(float* camera, const float* turn) {
+    set_camera_turn(turn);
+    hw2vr_camera_updated(camera);
+    set_camera_turn(nullptr);
+}
+
 }  // namespace hw2vr::engine
+
+extern "C" void __cdecl hw2vr_camera_updated(float* camera) { hw2vr::engine::turn_camera(camera); }

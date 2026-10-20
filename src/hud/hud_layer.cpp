@@ -4,14 +4,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "common/log.h"
+#include "hud/marker_memory.h"
 #include "proxy/engine_hooks.h"
 #include "proxy/gl_api.h"
 #include "stereo/depth_probe.h"
+#include "stereo/view_override.h"
 
 namespace hw2vr::hud {
 namespace {
@@ -26,6 +29,7 @@ unsigned g_candidate = 0, g_candidate_streak = 0, g_frames_without = 0;
 
 bool g_capture = false, g_premultiplied = true;
 bool g_ready = false;  // overlay target cleared for this frame (the game has entered its HUD pass)
+bool g_screen = false;  // screen mode: the whole screen goes to the panel, nothing redirected
 bool g_replaying = false;
 int g_width = 0, g_height = 0;
 gl::GLuint g_tex = 0, g_fbo = 0;
@@ -45,6 +49,7 @@ size_t g_kind_replay = 0, g_depth_replay = 0;
 float g_frame_depth = 0.0f, g_last_depth = 0.0f;  // last anchored depth this frame / ever
 constexpr float kDefaultMarkerDepth = 2000.0f;    // game units (20 m at the default world scale)
 unsigned g_world_draws = 0, g_world_anchored = 0;
+MarkerMemory g_marker_memory;  // steadies each marker's depth from frame to frame
 
 HWND g_window = nullptr;
 int g_cursor_override_x = -1, g_cursor_override_y = -1;
@@ -177,13 +182,64 @@ void set_target_size(int width, int height) {
     g_height = height;
 }
 
+float screen_aspect() { return g_height > 0 ? static_cast<float>(g_width) / static_cast<float>(g_height) : 0.0f; }
+
+void set_screen_mode(bool on) { g_screen = on; }
+
+void debug_dump(const std::wstring& dir) {
+    const gl::Api& a = gl::api();
+    gl::StateGuard guard;
+    gl::GLint pack_buffer = 0;
+    a.GetIntegerv(gl::PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+    a.BindBuffer(gl::PIXEL_PACK_BUFFER, 0);
+    auto save = [&](gl::GLuint fbo, int w, int h, const wchar_t* name) {
+        if (!fbo || w <= 0 || h <= 0) return;
+        std::vector<unsigned char> px(static_cast<size_t>(w) * h * 4);
+        a.BindFramebuffer(gl::READ_FRAMEBUFFER, fbo);
+        a.ReadBuffer(gl::COLOR_ATTACHMENT0);
+        a.ReadPixels(0, 0, w, h, gl::BGRA, gl::UNSIGNED_BYTE, px.data());
+        unsigned char header[18] = {0, 0, 2};  // uncompressed true colour, bottom-up rows like GL's
+        header[12] = static_cast<unsigned char>(w & 0xFF), header[13] = static_cast<unsigned char>(w >> 8);
+        header[14] = static_cast<unsigned char>(h & 0xFF), header[15] = static_cast<unsigned char>(h >> 8);
+        header[16] = 32;
+        header[17] = 8;
+        const std::wstring path = dir + name;
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, path.c_str(), L"wb") == 0 && f) {
+            fwrite(header, 1, sizeof header, f);
+            fwrite(px.data(), 1, px.size(), f);
+            fclose(f);
+            HW2VR_LOG("hud: saved %ls (%dx%d)", path.c_str(), w, h);
+        }
+    };
+    save(g_fbo, g_tex_width, g_tex_height, L"hw2vr_overlay.tga");
+    save(g_panel_fbo, g_panel_width, g_panel_height, L"hw2vr_panel.tga");
+    a.BindBuffer(gl::PIXEL_PACK_BUFFER, static_cast<gl::GLuint>(pack_buffer));
+}
+
+void capture_screen() {
+    gl::StateGuard guard;
+    gl::StateGuard::neutral();
+    if (!ensure_target()) return;
+    const gl::Api& a = gl::api();
+    a.BindFramebuffer(gl::READ_FRAMEBUFFER, 0);
+    a.ReadBuffer(gl::BACK);
+    a.BindFramebuffer(gl::DRAW_FRAMEBUFFER, g_fbo);
+    a.BlitFramebuffer(0, 0, g_width, g_height, 0, 0, g_width, g_height, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    a.ColorMask(0, 0, 0, 1);  // opaque: the panel shows the whole screen
+    a.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    a.Clear(gl::COLOR_BUFFER_BIT);
+    g_ready = true;
+    g_mips_fresh = false;
+}
+
 void set_window(void* hwnd) { g_window = static_cast<HWND>(hwnd); }
 void set_cursor_override(int x, int y) { g_cursor_override_x = x, g_cursor_override_y = y; }
 const Cursor& current_cursor() { return g_cursor; }
 const Cursor& last_cursor() { return g_last_cursor; }
 
 void on_draw_framebuffer_change(unsigned /*from*/, unsigned to) {
-    if (g_capture && g_premultiplied && !g_ready && !g_replaying && is_hud_fbo(to)) begin_overlay_frame();
+    if (g_capture && g_premultiplied && !g_screen && !g_ready && !g_replaying && is_hud_fbo(to)) begin_overlay_frame();
 }
 
 void end_frame() {
@@ -197,6 +253,7 @@ void end_frame() {
     g_cursor.drawn = false;
     g_kinds.clear();
     g_depths.clear();
+    g_marker_memory.end_frame();
     g_kind_replay = g_depth_replay = 0;
     g_frame_depth = 0.0f;
     g_mips_fresh = false;
@@ -247,14 +304,25 @@ float world_marker_depth(const float* bounds) {
     if (g_replaying) return g_depth_replay < g_depths.size() ? g_depths[g_depth_replay++] : g_last_depth;
     float z = 0.0f;
     ++g_world_draws;
-    if (bounds && depth::anchor_view_depth(bounds, &z)) {
-        g_frame_depth = g_last_depth = z;
-        ++g_world_anchored;
-    } else {
-        // No surface behind it (a health bar above its ship, a label beside it): the marker drawn just before it
-        // belongs to the same ship.
-        z = g_frame_depth > 0.0f ? g_frame_depth : g_last_depth > 0.0f ? g_last_depth : kDefaultMarkerDepth;
+    const bool anchored = bounds && depth::anchor_view_depth(bounds, &z);
+    if (anchored) ++g_world_anchored;
+    // No surface behind it (a health bar above its ship, a label beside it): the marker drawn just before it
+    // belongs to the same ship.
+    const float fallback = g_frame_depth > 0.0f ? g_frame_depth : g_last_depth > 0.0f ? g_last_depth : kDefaultMarkerDepth;
+    const float* p = stereo::game_projection();
+    if (bounds && p) {
+        // Its centre and size as a direction in the frame that doesn't turn with the head (game view turned back).
+        const float cx = bounds[0] + bounds[2] - 1.0f, cy = bounds[1] + bounds[3] - 1.0f;  // NDC
+        const Vec3 view = normalize(Vec3{(cx + p[8]) / p[0], (cy + p[9]) / p[5], -1.0f});
+        const float* t = depth::game_turn();
+        const Vec3 dir{t[0] * view.x + t[4] * view.y + t[8] * view.z, t[1] * view.x + t[5] * view.y + t[9] * view.z,
+                       t[2] * view.x + t[6] * view.y + t[10] * view.z};
+        const float size = 0.5f * std::hypot((bounds[2] - bounds[0]) * 2.0f / p[0], (bounds[3] - bounds[1]) * 2.0f / p[5]);
+        z = g_marker_memory.resolve(dir, size, anchored, z, fallback);
+    } else if (!anchored) {
+        z = fallback;
     }
+    if (anchored) g_frame_depth = g_last_depth = z;
     g_depths.push_back(z);
     return z;
 }
@@ -487,6 +555,7 @@ TestState test_state() {
 }
 
 float last_world_marker_depth() { return g_last_depth; }
+unsigned world_marker_jumps_held() { return g_marker_memory.held(); }
 
 void release() {
     const gl::Api& a = gl::api();

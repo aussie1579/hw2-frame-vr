@@ -19,7 +19,13 @@ struct Settings {
     bool hud_premultiplied = true;
     bool sync_stereo = true;       // both eyes every frame (replay); false = alternating-frame rendering
     bool fit_window = true;        // move the game window while VR runs so its client area is fully on its monitor
+    bool turn_game_camera = true;  // the game camera turns to look where the head looks (engine hook)
+    float game_camera_deadzone = 3.0f;  // degrees the gaze may move before the game camera follows
+    float game_fov = -1.0f;        // the game camera's vertical FOV while VR runs (0 = the game's own, < 0 = auto:
+                                   // just enough to cover the headset's view)
+    float camera_turn_test = 0.0f; // flat screen: Ctrl+Shift+F7 turns the game camera this many degrees (0 = off)
     int key_toggle = VK_F8, key_recentre = VK_F10, key_scale_up = VK_PRIOR, key_scale_down = VK_NEXT;  // Ctrl+Shift+
+    int key_turn_test = VK_F7;
 };
 
 void configure(const Settings& settings, const std::wstring& dll_dir);

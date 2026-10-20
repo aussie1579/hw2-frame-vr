@@ -51,6 +51,16 @@ inline void rotation_y(float radians, float out[16]) {
     out[10] = c;
 }
 
+// Rotation about +X: positive turns -Z (forward) towards +Y (up).
+inline void rotation_x(float radians, float out[16]) {
+    identity(out);
+    const float c = std::cos(radians), s = std::sin(radians);
+    out[5] = c;
+    out[6] = s;
+    out[9] = -s;
+    out[10] = c;
+}
+
 inline void translation(float x, float y, float z, float out[16]) {
     identity(out);
     out[12] = x;

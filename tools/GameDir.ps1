@@ -27,3 +27,18 @@ function Test-Hw2vrDll([string]$path) {
 function Assert-GameNotRunning {
     if (Get-Process HomeworldRM -ErrorAction SilentlyContinue) { throw 'HomeworldRM.exe is running - quit the game first.' }
 }
+
+# Opt-in Large Address Aware patch of HomeworldRM.exe (CLAUDE.md, decided 2026-10-14): the 32-bit game gets 4 GB of
+# address space instead of 2 on 64-bit Windows - needed for a 2880x2880 VR window. One bit in the PE file header.
+$script:Hw2vrExeBackupName = 'HomeworldRM.exe.hw2vr-original'
+
+function Get-LaaBitOffset([byte[]]$bytes) {
+    $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+    if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x00004550) { throw 'HomeworldRM.exe has no PE header.' }
+    return $pe + 4 + 18  # IMAGE_FILE_HEADER.Characteristics (low byte holds IMAGE_FILE_LARGE_ADDRESS_AWARE = 0x20)
+}
+
+function Test-LargeAddressAware([string]$exe) {
+    $bytes = [IO.File]::ReadAllBytes($exe)
+    ($bytes[(Get-LaaBitOffset $bytes)] -band 0x20) -ne 0
+}

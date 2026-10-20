@@ -188,6 +188,8 @@ void place_popup(const Vec3& head) {
     show(g_popup);
 }
 
+bool g_suspended = false;
+
 }  // namespace
 
 void configure(const Settings& settings) {
@@ -233,8 +235,20 @@ void stop() {
     g_started = false;
 }
 
+void set_suspended(bool on) {
+    if (on == g_suspended) return;
+    g_suspended = on;
+    if (!on) return;
+    for (Window* w : {&g_status, &g_manager, &g_popup}) w->overlay.hide(), w->open = false;
+    g_close.hide();
+    g_modal = false;
+}
+
 void before_swap() {
-    if (!g_started || !g_s.enabled) return;
+    if (!g_started || !g_s.enabled || g_suspended) return;
+    const bool square = hud::screen_aspect() > 0.0f && hud::screen_aspect() < 1.5f;
+    std::memcpy(g_status.region, square ? g_s.status_region_square : g_s.status_region, sizeof g_status.region);
+    std::memcpy(g_manager.region, square ? g_s.manager_region_square : g_s.manager_region, sizeof g_manager.region);
     const bool was_manager = g_manager.open, was_modal = g_modal;
     g_manager.open = track(g_manager.open, hud::ui_coverage(g_manager.region), &g_manager.closed_frames);
     g_modal = track(g_modal, hud::ui_coverage(g_s.modal_region), &g_modal_closed_frames);
@@ -259,7 +273,7 @@ void before_swap() {
 }
 
 void update(const float hmd[16]) {
-    if (!g_started || !g_s.enabled) return;
+    if (!g_started || !g_s.enabled || g_suspended) return;
     const Vec3 head = position(hmd);
     if (tablet::visible()) {
         g_last_tablet = tablet::geometry();

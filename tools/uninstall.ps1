@@ -35,6 +35,23 @@ if ((Test-Path $openvrBackup) -and -not (Test-Path $openvr)) {
     Write-Host "Restored the original openvr_api.dll from $Hw2vrOpenvrBackupName"
 }
 Remove-Item (Join-Path $GameDir 'hw2vr_bindings') -Recurse -Force -ErrorAction SilentlyContinue
+# The Large Address Aware patch: put the original exe back - unless Steam has replaced the exe since (then the backup
+# is stale and the exe already unpatched or newer: only the backup goes).
+$exe = Join-Path $GameDir 'HomeworldRM.exe'
+$exeBackup = Join-Path $GameDir $Hw2vrExeBackupName
+if (Test-Path $exeBackup) {
+    $now = [IO.File]::ReadAllBytes($exe)
+    $orig = [IO.File]::ReadAllBytes($exeBackup)
+    $at = Get-LaaBitOffset $orig
+    $orig[$at] = $orig[$at] -bor 0x20
+    if ($now.Length -eq $orig.Length -and [Linq.Enumerable]::SequenceEqual($now, $orig)) {
+        Copy-Item $exeBackup $exe -Force
+        Write-Host "Restored the original HomeworldRM.exe (Large Address Aware patch removed)"
+    } else {
+        Write-Warning "HomeworldRM.exe changed since it was patched (Steam update?) - left as it is; stale backup removed."
+    }
+    Remove-Item $exeBackup
+}
 if ($Purge) {
     foreach ($f in 'hw2vr.ini', 'hw2vr.ini.bak', 'hw2vr.log', 'hw2vr_panel.ini', 'hw2vr_console.ini') { Remove-Item (Join-Path $GameDir $f) -ErrorAction SilentlyContinue }
 }

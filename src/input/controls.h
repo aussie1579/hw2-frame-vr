@@ -36,13 +36,15 @@ struct Settings {
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;
     int click_freeze_ms = 80;       // the cursor stays put this long after a release
-    float drag_degrees = 1.5f;      // a held left click starts dragging once the laser moves this far
+    int click_ms = 300;             // a held left click can't start dragging this soon after the press
+    float drag_degrees = 3.0f;      // a held left click starts dragging once the laser moves this far
     float swivel_degrees = 2.0f;    // a held trigger turns the camera once the laser moves this far (else: right click)
     float swivel_speed = 12.0f;     // mouse counts per degree the laser turns while turning the camera
     bool swivel_invert_x = false, swivel_invert_y = false;
     double filter_min_cutoff = 1.0, filter_beta = 0.007;  // 1-euro filter on the cursor, in pixels
     bool haptics = true;
     bool show_beam = true;
+    int mouse_mode = 0;  // 0 auto (window mode if the game window doesn't fit on the desktop), 1 window, 2 cursor
     float cursor_distance = 10.0f;  // metres: cursor depth until the laser first touches something
 };
 

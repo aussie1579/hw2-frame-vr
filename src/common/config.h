@@ -11,6 +11,7 @@ struct Config {
     bool verbose = false;
     bool debug_hud_capture = false;  // capture/convert the HUD and redirect the cursor even without VR (tests)
     float debug_replay_test_offset_x = 0.0f;  // replay every frame without VR with this view offset (tests)
+    float debug_camera_turn_test = 0.0f;      // flat screen: Ctrl+Shift+F7 turns the game camera this many degrees
 
     // VR (Tier 2). Ctrl+Shift+F8 toggles VR, F10 recentres, PgUp/PgDn change world scale.
     bool vr_autostart = false;      // start VR at the first frame instead of waiting for Ctrl+Shift+F8
@@ -18,6 +19,10 @@ struct Config {
     bool vr_hud_premultiplied = true;
     bool vr_sync_stereo = true;      // [vr] stereo = sync (both eyes every frame) | afr (alternating frames)
     bool vr_fit_window = true;       // [vr] fit_window: client area fully on its monitor while VR runs
+    bool vr_turn_game_camera = true; // [vr] game_camera = head (turns to look where you look) | fixed
+    float vr_game_camera_deadzone = 3.0f;  // [vr] game_camera_deadzone: degrees before the game camera follows
+    float vr_game_fov = -1.0f;       // [vr] game_fov: the game camera's vertical FOV in VR (0 = its own, -1 = auto)
+    bool vr_lens_flares = false;     // [vr] lens_flares: the game's lens flares in VR
     int vr_hud_layout = 3;           // [vr] hud = console (0) | aligned (1) | panel (2, shelved) | tablet (3)
     bool vr_world_markers = true;    // [vr] world_markers: selection circles etc. at their ship's depth
     float vr_hud_distance = 3.0f;    // aligned HUD: metres
@@ -30,6 +35,8 @@ struct Config {
     bool tablet_always = false;
     float status_region[4] = {0.75f, 0.0f, 1.0f, 0.07f};
     float manager_region[4] = {0.855f, 0.06f, 1.0f, 0.86f};
+    float status_region_square[4] = {0.75f, 0.0f, 1.0f, 0.035f};
+    float manager_region_square[4] = {0.852f, 0.028f, 1.0f, 0.965f};
     float modal_region[4] = {0.3f, 0.3f, 0.7f, 0.7f};
     float manager_width = 0.30f;
     float menu_distance = 2.0f;        // the menu/dialog panel
@@ -55,7 +62,8 @@ struct Config {
     float zoom_notches_per_second = 8.0f;
     bool zoom_invert = false;
     int click_freeze_ms = 80;
-    float drag_degrees = 1.5f;     // a held click starts dragging once the laser moves this far
+    int click_ms = 300;            // a held click can't start dragging this soon after the press
+    float drag_degrees = 3.0f;     // a held click starts dragging once the laser moves this far
     float swivel_degrees = 2.0f;   // a held trigger turns the camera once the laser moves this far (else: right click)
     float swivel_speed = 12.0f;    // mouse counts per degree the laser turns, while turning the camera
     bool swivel_invert_x = false;
@@ -65,6 +73,7 @@ struct Config {
     float filter_min_cutoff = 1.0f, filter_beta = 0.007f;
     bool haptics = true;
     bool show_beam = true;
+    int mouse_mode = 0;  // [controls] mouse = auto | window | cursor (input/input_sim.h)
     float cursor_distance = 10.0f;  // metres
 
     // [buttons]: key names / combos / VR actions (input/key_names.h), defaults in input/buttons.h; <button>_hold: what

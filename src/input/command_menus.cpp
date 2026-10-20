@@ -50,7 +50,9 @@ const Def kMenus[kMenuCount] = {
       {L"Stop", {CMD "cmd_ico_stop.dds"}, L"S"},
       {L"Repair", {CMD "cmd_ico_repair.dds"}, L"Y", Act::ModifierClick},
       {L"Harvest", {CMD "cmd_ico_resource.dds"}, L"H", Act::ModifierClick},
-      {L"Special", {CMD "cmd_ico_specialattack.dds"}, L"Z", Act::ModifierClick}}},
+      {L"Special", {CMD "cmd_ico_specialattack.dds"}, L"Z", Act::ModifierClick},
+      // J: the game opens the Sensors Manager to pick the destination (taskbar btnHyperspace, eHyperspace)
+      {L"Hyperspace", {CMD "cmd_ico_hyperspace.dds"}, L"J"}}},
     // Tactics on the right half, stances on the left.
     {"tactics", L"TACTICS",
      {{L"Aggressive", {CMD "cmd_ico_aggressive.dds"}, L"F2"},

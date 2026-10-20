@@ -28,6 +28,7 @@
 #include "hud/hud_layer.h"
 #include "hud/marker_geometry.h"
 #include "input/command_menus.h"
+#include "input/input_sim.h"
 #include "input/radial_menu.h"
 #include "input/tablet.h"
 #include "proxy/engine_hooks.h"
@@ -77,6 +78,14 @@ struct ProgramInfo {
     GLint loc_cam = -1;   // inMatC
     GLint loc_mv = -1;    // inMatMV
     GLint loc_proj = -1;  // inMatP
+    // Only looked up to recognise programs: screen-placed sprites (inWindow, inOfs) and light glows (inCen).
+    GLint loc_window = -1, loc_ofs = -1, loc_cen = -1;
+    // The motion blur pass (program 51: post_complex) reprojects each pixel from this frame's camera (inMatC, inMatCP)
+    // into last frame's (inMatLC, inMatLCP) and smears along the difference.
+    GLint loc_cam_proj = -1, loc_last_cam = -1, loc_last_cam_proj = -1;
+    GLfloat cam_sent[16] = {}, cam_proj[16] = {};  // what the driver got for inMatC (after our override), inMatCP
+    bool has_cam_sent = false, has_cam_proj = false;
+    bool flare_logged = false;
     bool proj_is_perspective = false;  // from this program's last inMatP upload
     GLfloat raw_proj[16] = {};         // the game's last inMatP for this program (world markers are re-projected)
     bool has_raw_proj = false;
@@ -92,6 +101,11 @@ struct ProgramInfo {
     bool has_camera_matrix() const { return loc_view >= 0 || loc_cam >= 0; }
     bool view_space_input() const { return !has_camera_matrix() && loc_mv < 0; }  // group C
     bool mv_may_be_camera() const { return !has_camera_matrix() && loc_mv >= 0; }   // group B
+    // bg_lensflare (program 9 on build 12653478): the only program with inMatP and none of the others above.
+    bool motion_blur() const { return loc_cam >= 0 && loc_cam_proj >= 0 && loc_last_cam >= 0 && loc_last_cam_proj >= 0; }
+    bool lens_flare() const {
+        return loc_proj >= 0 && view_space_input() && loc_window < 0 && loc_ofs < 0 && loc_cen < 0;
+    }
 };
 
 struct TrackedUniform {
@@ -103,12 +117,21 @@ constexpr TrackedUniform kTracked[] = {
     {"inMatC", &ProgramInfo::loc_cam},
     {"inMatMV", &ProgramInfo::loc_mv},
     {"inMatP", &ProgramInfo::loc_proj},
+    {"inWindow", &ProgramInfo::loc_window},
+    {"inOfs", &ProgramInfo::loc_ofs},
+    {"inCen", &ProgramInfo::loc_cen},
+    {"inMatCP", &ProgramInfo::loc_cam_proj},
+    {"inMatLC", &ProgramInfo::loc_last_cam},
+    {"inMatLCP", &ProgramInfo::loc_last_cam_proj},
 };
 
 std::unordered_map<GLuint, ProgramInfo> g_programs;  // node-based: element pointers survive rehashing
 GLuint g_current_program = 0;
 ProgramInfo* g_current = nullptr;
 GLuint g_draw_fbo = 0;
+unsigned g_marker_draws_this_frame = 0;
+int g_screen_w = 0, g_screen_h = 0;
+bool g_lens_flares_in_vr = false;
 
 ProgramInfo* find_program(GLuint program) {
     auto it = g_programs.find(program);
@@ -236,8 +259,12 @@ void APIENTRY my_glUniformMatrix4fv(GLint loc, GLsizei count, GLboolean transpos
             ++info->raw_version;
         } else if (hw2vr::stereo::CameraUniform source; override_camera && camera_view_source(*info, loc, &source)) {
             hw2vr::stereo::apply_view_override(value, replaced, source);
+            if (loc == info->loc_cam) std::memcpy(info->cam_sent, replaced, sizeof replaced), info->has_cam_sent = true;
             real_glUniformMatrix4fv(loc, 1, transpose, replaced);
             return;
+        } else if (loc == info->loc_cam_proj) {
+            std::memcpy(info->cam_proj, value, sizeof info->cam_proj);
+            info->has_cam_proj = true;
         }
     }
     real_glUniformMatrix4fv(loc, count, transpose, value);
@@ -263,6 +290,9 @@ void draw_world_marker(const DrawCall& call, Draw draw) {
         have_bounds = hw2vr::markers::screen_bounds(call.elements, call.first, call.count, call.index_type,
                                                     info->has_raw_mv ? info->raw_mv : kIdentity, info->raw_proj, bounds);
     const float depth = hw2vr::hud::world_marker_depth(have_bounds ? bounds : nullptr);
+    if (have_bounds && g_marker_draws_this_frame++ == 0)  // [debug] verbose: where the frame's first marker is
+        HW2VR_VLOG("marker 0: x %.3f-%.3f y %.3f-%.3f (pixels)", bounds[0] * g_screen_w, bounds[2] * g_screen_w,
+                   bounds[1] * g_screen_h, bounds[3] * g_screen_h);
     GLfloat placed[16];
     if (info && info->loc_proj >= 0 && info->has_raw_proj && hw2vr::stereo::place_at_depth(info->raw_proj, depth, placed)) {
         real_glUniformMatrix4fv(info->loc_proj, 1, 0, placed);
@@ -278,7 +308,23 @@ void draw_world_marker(const DrawCall& call, Draw draw) {
 // count as 2D.
 template <class Draw>
 void game_draw(const DrawCall& call, Draw draw) {
+    if (g_current && g_current->lens_flare()) {
+        if (!g_current->flare_logged) {
+            g_current->flare_logged = true;
+            HW2VR_LOG("gl: program %u draws lens flares (bg_lensflare) - %s in VR", g_current_program,
+                      g_lens_flares_in_vr ? "kept" : "hidden");
+        }
+        if (!g_lens_flares_in_vr && hw2vr::stereo::vr_eye_active()) return;
+    }
     if (g_current && g_current->has_raw_mv) sync_model_view(*g_current);
+    // Our camera changes aren't the game's camera moving: with "last frame's" camera set to this frame's (as the
+    // driver has it, eye included) every pixel stays put and the motion blur pass passes the picture through. Without
+    // this the head's every move - the game camera now turns with it - smears the scene.
+    if (g_current && g_current->motion_blur() && g_current->has_cam_sent && g_current->has_cam_proj &&
+        hw2vr::stereo::active()) {
+        real_glUniformMatrix4fv(g_current->loc_last_cam, 1, 0, g_current->cam_sent);
+        real_glUniformMatrix4fv(g_current->loc_last_cam_proj, 1, 0, g_current->cam_proj);
+    }
     const bool is_2d = !g_current || !g_current->proj_is_perspective;
     switch (hw2vr::hud::draw_action(g_draw_fbo, g_current_program, is_2d)) {
         case hw2vr::hud::DrawAction::Draw:
@@ -389,6 +435,28 @@ extern "C" __declspec(dllexport) void hw2vr_test_set_ui_phase(int installed, int
 extern "C" __declspec(dllexport) unsigned hw2vr_test_find_ui_in(const wchar_t* exe_path) {
     return hw2vr::engine::test_find_ui_in(exe_path);
 }
+extern "C" __declspec(dllexport) unsigned hw2vr_test_find_camera_update(const wchar_t* exe_path, int* calls) {
+    return hw2vr::engine::test_find_camera_update(exe_path, calls);
+}
+// Window-mode mouse (input/input_sim.h) on a test window: a move, a click, a relative move, then mode off.
+extern "C" __declspec(dllexport) void hw2vr_test_window_mouse(HWND window, int phase) {
+    if (phase == 0) {
+        hw2vr::inputsim::set_window_mode(window, true);
+        hw2vr::inputsim::set_cursor_client(window, 100, 200);
+        hw2vr::inputsim::mouse_button(0, true);
+        hw2vr::inputsim::mouse_button(0, false);
+        hw2vr::inputsim::move_relative(5, -3);
+    } else {
+        hw2vr::inputsim::set_window_mode(nullptr, false);
+    }
+}
+extern "C" __declspec(dllexport) int hw2vr_test_is_lens_flare(unsigned program) {
+    const ProgramInfo* info = find_program(program);
+    return info && info->lens_flare() ? 1 : 0;
+}
+extern "C" __declspec(dllexport) void hw2vr_test_turn_camera(float* camera, const float* turn) {
+    hw2vr::engine::test_turn_camera(camera, turn);
+}
 extern "C" __declspec(dllexport) float hw2vr_test_last_marker_depth() { return hw2vr::hud::last_world_marker_depth(); }
 extern "C" __declspec(dllexport) float hw2vr_test_ui_coverage(float u0, float v0, float u1, float v1) {
     const float r[4] = {u0, v0, u1, v1};
@@ -492,7 +560,9 @@ extern "C" BOOL WINAPI hook_wglSwapBuffers(HDC dc) {
     hw2vr::gl::load();               // first call only; needs the game's context, which is current here
     static bool engine_tried = false;
     if (!engine_tried) engine_tried = true, hw2vr::engine::install();  // the game's code is running (and unpacked) now
-    if (RECT rc; GetClientRect(WindowFromDC(dc), &rc)) hw2vr::hud::set_target_size(rc.right, rc.bottom);
+    if (RECT rc; GetClientRect(WindowFromDC(dc), &rc))
+        hw2vr::hud::set_target_size(rc.right, rc.bottom), g_screen_w = rc.right, g_screen_h = rc.bottom;
+    g_marker_draws_this_frame = 0;
     hw2vr::hud::set_window(WindowFromDC(dc));
     hw2vr::hotkeys::log_seen_keys();
     hw2vr::stereo::on_frame();
@@ -520,6 +590,7 @@ void replay_frame() {
 }
 
 void configure_replay_test(float offset_x) { g_debug_replay_offset = offset_x; }
+void set_lens_flares_in_vr(bool on) { g_lens_flares_in_vr = on; }
 
 bool init_hooks() {
     if (!record::init()) return false;

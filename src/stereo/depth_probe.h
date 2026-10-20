@@ -17,6 +17,10 @@ namespace hw2vr::depth {
 // laser ray to test in it (game view space, game units, dir normalised).
 void set_camera(const float eye_from_game[16], const float eye_projection[16]);
 void set_ray(const Vec3& origin, const Vec3& dir);
+// The game camera's turn this frame (vr/vr_frame.cpp: the head's yaw and pitch; identity when it doesn't turn). The
+// marker grid remembers the turn it was traced with and maps each marker's rectangle into it.
+void set_game_turn(const float turn[16]);
+const float* game_turn();  // the one set for this frame (identity until set)
 void clear_ray();
 
 // Before the swap: after the game's draws, before the second-eye replay overwrites the depth.

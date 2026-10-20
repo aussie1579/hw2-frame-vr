@@ -26,6 +26,7 @@ vr::Overlay g_overlay;
 float g_anchor[16];
 bool g_placed = false;
 bool g_shown = false;  // Modal layout only
+bool g_screen = false; // screen mode (menus, loading screens): the whole game screen, solid for the laser
 float g_aspect = 1440.0f / 3440.0f;
 input::PanelGeometry g_geometry;
 
@@ -108,8 +109,9 @@ bool start() {
 
 bool movable() { return g_settings.layout == Layout::Console || g_settings.layout == Layout::Panel; }
 void set_shown(bool shown) { g_shown = shown; }
-bool shown() { return g_placed && (g_settings.layout != Layout::Modal || g_shown); }
-bool solid() { return g_settings.layout == Layout::Console; }
+void set_screen_mode(bool on) { g_screen = on; }
+bool shown() { return g_placed && (g_settings.layout != Layout::Modal || g_shown || g_screen); }
+bool solid() { return g_settings.layout == Layout::Console || g_screen; }
 bool bar_above() { return g_placed && g_geometry.centre.y < position(g_anchor).y - 0.05f; }
 
 void follow(const float camera_pose[16], const float hmd_pose[16], float tan_half_fov_x) {
@@ -145,11 +147,16 @@ Placement& placement() { return g_placement; }
 void apply() {
     clamp_placement(g_placement);
     if (!g_placed) return;
+    // The menus panel shows the whole screen: a square game screen (a 2880x2880 VR window) would make it as tall as
+    // it is wide, so its height is capped at ~0.9 x its distance (about 48 degrees).
+    float width = g_placement.width;
+    if (g_settings.layout == Layout::Modal && g_aspect > 0.0f)
+        width = std::min(width, 0.9f * g_placement.distance / g_aspect);
     g_geometry = input::PanelGeometry::in_front(g_anchor, g_placement.distance, g_placement.side, g_placement.height,
-                                                g_placement.width, g_aspect, g_placement.curvature);
+                                                width, g_aspect, g_placement.curvature);
     float pose[16];
     g_geometry.pose(pose);
-    g_overlay.set_width(g_placement.width);
+    g_overlay.set_width(width);
     g_overlay.set_curvature(g_placement.curvature);
     g_overlay.place(pose);
 }

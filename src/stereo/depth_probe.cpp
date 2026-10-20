@@ -7,7 +7,9 @@
 #include <vector>
 
 #include "common/log.h"
+#include "common/mat4.h"
 #include "proxy/gl_api.h"
+#include "stereo/eye_math.h"
 #include "stereo/view_override.h"
 
 namespace hw2vr::depth {
@@ -24,6 +26,7 @@ struct Slot {
     unsigned epoch = 0;
     int width = 0, height = 0;  // grid slots: the grid's size
     float game_proj[4] = {};    // grid slots: P0, P5, P8, P9 the rays were built from
+    float turn[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // grid slots: the game camera's turn then
 };
 
 // A render target + the readbacks of what's drawn into it.
@@ -57,6 +60,10 @@ unsigned g_probes = 0, g_results = 0, g_hits = 0, g_grids = 0;
 std::vector<float> g_grid;  // distances along each cell's ray (game units), < 0 = nothing; row 0 = screen bottom
 int g_grid_w = 0, g_grid_h = 0;
 float g_grid_proj[4] = {};
+// The game camera turns with the head (engine hook), so the camera the grid was traced from (a frame or two ago) and
+// the one this frame's markers were placed with differ by the head's turn in between.
+float g_turn[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+float g_grid_turn[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 
 constexpr const char* kVs = R"(#version 330 core
 void main() {
@@ -258,6 +265,9 @@ void set_camera(const float eye_from_game[16], const float eye_projection[16]) {
     g_have_camera = true;
 }
 
+void set_game_turn(const float turn[16]) { std::memcpy(g_turn, turn, sizeof g_turn); }
+const float* game_turn() { return g_turn; }
+
 void set_ray(const Vec3& origin, const Vec3& dir) {
     g_origin = origin;
     g_dir = dir;
@@ -332,7 +342,10 @@ void run(int width, int height) {
         const float game[4] = {game_proj[0], game_proj[5], game_proj[8], game_proj[9]};
         a.Uniform4f(a.GetUniformLocation(g_grid_program, "u_game"), game[0], game[1], game[2], game[3]);
         a.Uniform2f(a.GetUniformLocation(g_grid_program, "u_cells"), static_cast<float>(cw), static_cast<float>(ch));
-        if (Slot* s = draw_and_read(g_grid_target, g_grid_program, kRed, gl::FLOAT)) std::memcpy(s->game_proj, game, sizeof game);
+        if (Slot* s = draw_and_read(g_grid_target, g_grid_program, kRed, gl::FLOAT)) {
+            std::memcpy(s->game_proj, game, sizeof game);
+            std::memcpy(s->turn, g_turn, sizeof g_turn);
+        }
     }
     restore_pack();
 }
@@ -359,12 +372,18 @@ void poll_grid() {
         g_grid_w = s.width;
         g_grid_h = s.height;
         std::memcpy(g_grid_proj, s.game_proj, sizeof g_grid_proj);
+        std::memcpy(g_grid_turn, s.turn, sizeof g_grid_turn);
         ++g_grids;
     });
 }
 
-bool anchor_view_depth(const float b[4], float* view_depth) {
+bool anchor_view_depth(const float rect[4], float* view_depth) {
     if (g_grid.empty() || g_grid_w <= 0 || g_grid_h <= 0) return false;
+    // The rectangle as the grid's camera saw it: turned by grid_turn^-1 * turn (identity when the camera didn't turn).
+    float rot[16], grid_inverse[16], b[4];
+    mat4::rigid_inverse(g_grid_turn, grid_inverse);
+    mat4::multiply(grid_inverse, g_turn, rot);
+    if (!stereo::turn_screen_rect(rect, g_grid_proj, rot, b)) return false;
     // Nearest surface in a cell rectangle; view depth from the distance along that cell's ray.
     auto nearest = [](float x0, float y0, float x1, float y1, float* z) {
         const int i0 = std::clamp(static_cast<int>(std::floor(x0 * g_grid_w)), 0, g_grid_w - 1);

@@ -41,7 +41,9 @@ Placement centred(float distance, float degrees, float height);
 void configure(const Settings& settings);
 bool start();  // VR started: create the overlay
 bool movable();  // console or panel: placed by the player, grab bar shown
-void set_shown(bool shown);  // Modal layout: show the whole screen UI (a menu or dialog is up)
+void set_shown(bool shown);
+// Screen mode (menus, loading screens: no 3D world): the panel shows the game's whole screen and is solid for the laser.
+void set_screen_mode(bool on);  // Modal layout: show the whole screen UI (a menu or dialog is up)
 bool shown();               // placed and visible (the laser can use it)
 bool solid();    // console: the whole surface is UI (the laser never points through it)
 bool bar_above();  // the grab bar goes above it (console, below eye level) rather than under it

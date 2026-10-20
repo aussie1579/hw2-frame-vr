@@ -34,6 +34,19 @@ Config load_config(const std::wstring& ini_path) {
     c.verbose = GetPrivateProfileIntW(L"debug", L"verbose", c.verbose ? 1 : 0, ini_path.c_str()) != 0;
     c.debug_hud_capture = GetPrivateProfileIntW(L"debug", L"hud_capture", 0, ini_path.c_str()) != 0;
     c.debug_replay_test_offset_x = read_float(ini_path, L"debug", L"replay_test_offset_x", 0.0f);
+    c.debug_camera_turn_test = read_float(ini_path, L"debug", L"camera_turn_test", 0.0f);
+    {
+        wchar_t camera[16];
+        GetPrivateProfileStringW(L"vr", L"game_camera", L"head", camera, static_cast<DWORD>(std::size(camera)), ini_path.c_str());
+        c.vr_turn_game_camera = _wcsicmp(camera, L"fixed") != 0;
+    }
+    c.vr_game_camera_deadzone = read_float(ini_path, L"vr", L"game_camera_deadzone", c.vr_game_camera_deadzone);
+    {
+        wchar_t fov[16];
+        GetPrivateProfileStringW(L"vr", L"game_fov", L"auto", fov, static_cast<DWORD>(std::size(fov)), ini_path.c_str());
+        c.vr_game_fov = _wcsicmp(fov, L"auto") == 0 ? -1.0f : static_cast<float>(_wtof(fov));
+    }
+    c.vr_lens_flares = GetPrivateProfileIntW(L"vr", L"lens_flares", c.vr_lens_flares ? 1 : 0, ini_path.c_str()) != 0;
     {
         wchar_t stereo[16];
         GetPrivateProfileStringW(L"vr", L"stereo", L"sync", stereo, static_cast<DWORD>(std::size(stereo)), ini_path.c_str());
@@ -72,6 +85,8 @@ Config load_config(const std::wstring& ini_path) {
     };
     read_rect(L"status_region", c.status_region);
     read_rect(L"manager_region", c.manager_region);
+    read_rect(L"status_region_square", c.status_region_square);
+    read_rect(L"manager_region_square", c.manager_region_square);
     read_rect(L"menu_region", c.modal_region);
     c.manager_width = read_float(ini_path, L"tablet", L"manager_width", c.manager_width);
     c.menu_distance = read_float(ini_path, L"tablet", L"menu_distance", c.menu_distance);
@@ -99,6 +114,7 @@ Config load_config(const std::wstring& ini_path) {
     c.zoom_notches_per_second = read_float(ini_path, L"controls", L"zoom_notches_per_second", c.zoom_notches_per_second);
     c.zoom_invert = flag(L"zoom_invert", c.zoom_invert);
     c.click_freeze_ms = static_cast<int>(GetPrivateProfileIntW(L"controls", L"click_freeze_ms", c.click_freeze_ms, ini_path.c_str()));
+    c.click_ms = static_cast<int>(GetPrivateProfileIntW(L"controls", L"click_ms", c.click_ms, ini_path.c_str()));
     c.drag_degrees = read_float(ini_path, L"controls", L"drag_degrees", c.drag_degrees);
     c.swivel_degrees = read_float(ini_path, L"controls", L"swivel_degrees", c.swivel_degrees);
     c.swivel_speed = read_float(ini_path, L"controls", L"swivel_speed", c.swivel_speed);
@@ -110,6 +126,11 @@ Config load_config(const std::wstring& ini_path) {
     c.filter_beta = read_float(ini_path, L"controls", L"filter_beta", c.filter_beta);
     c.haptics = flag(L"haptics", c.haptics);
     c.show_beam = flag(L"show_beam", c.show_beam);
+    {
+        wchar_t mouse[16];
+        GetPrivateProfileStringW(L"controls", L"mouse", L"auto", mouse, static_cast<DWORD>(std::size(mouse)), ini_path.c_str());
+        c.mouse_mode = _wcsicmp(mouse, L"window") == 0 ? 1 : _wcsicmp(mouse, L"cursor") == 0 ? 2 : 0;
+    }
     c.cursor_distance = read_float(ini_path, L"controls", L"cursor_distance", c.cursor_distance);
 
     for (int i = 0; i < input::kButtonCount; ++i) {

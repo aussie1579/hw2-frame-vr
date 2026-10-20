@@ -2,8 +2,13 @@
 # Never modifies game files: an existing non-HW2VR opengl32.dll (e.g. ReShade) is renamed to a backup that
 # uninstall.ps1 restores. hw2vr.ini is copied only if the game folder doesn't have one yet.
 # -ResetConfig replaces an existing hw2vr.ini with the shipped one (old copy kept as hw2vr.ini.bak).
+# -LargeAddressAware (opt-in, the one change to a game file): sets the Large Address Aware bit in HomeworldRM.exe so
+# the 32-bit game gets 4 GB of address space - needed for a 2880x2880 VR window. The original exe is kept as
+# HomeworldRM.exe.hw2vr-original and uninstall.ps1 puts it back. A Steam update or file check undoes the patch; the
+# proxy logs whether it is on.
 # Usage: pwsh -File tools\install.ps1 [-GameDir <...\HomeworldRM\Bin\Release>] [-Config RelWithDebInfo|Debug] [-ResetConfig]
-param([string]$GameDir, [string]$Config = 'RelWithDebInfo', [switch]$ResetConfig)
+#                                     [-LargeAddressAware]
+param([string]$GameDir, [string]$Config = 'RelWithDebInfo', [switch]$ResetConfig, [switch]$LargeAddressAware)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'GameDir.ps1')
 
@@ -47,6 +52,21 @@ if (-not (Test-Path $ini)) {
     Copy-Item (Join-Path $root 'config\hw2vr.ini') $GameDir
     $placed += 'hw2vr.ini'
 }
+if ($LargeAddressAware) {
+    $exe = Join-Path $GameDir 'HomeworldRM.exe'
+    if (Test-LargeAddressAware $exe) {
+        Write-Host 'HomeworldRM.exe is already Large Address Aware.'
+    } else {
+        $exeBackup = Join-Path $GameDir $Hw2vrExeBackupName
+        Copy-Item $exe $exeBackup -Force
+        $bytes = [IO.File]::ReadAllBytes($exe)
+        $at = Get-LaaBitOffset $bytes
+        $bytes[$at] = $bytes[$at] -bor 0x20
+        [IO.File]::WriteAllBytes($exe, $bytes)
+        Write-Host "HomeworldRM.exe patched to be Large Address Aware (original kept as $Hw2vrExeBackupName)"
+    }
+    $placed += 'HomeworldRM.exe (Large Address Aware)'
+}
 # Keep entries from an earlier install (e.g. hw2vr.ini placed then) so uninstall still knows about them.
 Set-Content $manifest (@($previous) + $placed | Select-Object -Unique)
 $placed = @(Get-Content $manifest)
@@ -55,4 +75,4 @@ $v = (Get-Item $target).VersionInfo
 Write-Host "Installed $($v.ProductName) $($v.FileVersion) ($Config) to $GameDir"
 Write-Host "  files: $($placed -join ', ')"
 Write-Host '  log:   hw2vr.log next to the DLL (rewritten each launch)'
-Write-Host '  NOTE:  single-player/skirmish only - there is no multiplayer guard yet. Uninstall before playing online.' -ForegroundColor Yellow
+Write-Host '  NOTE:  single-player/skirmish mod (no multiplayer guard, by decision).' -ForegroundColor Yellow

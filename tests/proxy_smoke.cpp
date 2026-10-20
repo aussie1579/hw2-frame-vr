@@ -602,6 +602,56 @@ void ui_render_test(HMODULE proxy) {
     check(written == 6, "tablet and command menu images render (ui_*.raw next to the smoke test)");
 }
 
+// --- Window-mode mouse: events go straight to the window procedure, real mouse messages are swallowed -------------
+struct MouseRecord {
+    UINT msg;
+    WPARAM wparam;
+    int x, y;
+};
+std::vector<MouseRecord> g_mouse_seen;
+
+LRESULT CALLBACK mouse_test_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST)
+        g_mouse_seen.push_back({msg, wparam, static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))});
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+void pump(HWND hwnd) {
+    MSG m;
+    while (PeekMessageW(&m, hwnd, 0, 0, PM_REMOVE)) DispatchMessageW(&m);
+}
+
+void window_mouse_test(HMODULE proxy) {
+    using PFNWINMOUSE = void (*)(HWND, int);
+    auto run = reinterpret_cast<PFNWINMOUSE>(GetProcAddress(proxy, "hw2vr_test_window_mouse"));
+    check(run != nullptr, "proxy exports hw2vr_test_window_mouse");
+    if (!run) return;
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = mouse_test_proc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"hw2vr_mouse_test";
+    RegisterClassW(&wc);
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"mouse test", WS_OVERLAPPEDWINDOW, 0, 0, 320, 320, nullptr, nullptr,
+                              wc.hInstance, nullptr);
+    pump(hwnd);
+    g_mouse_seen.clear();
+    run(hwnd, 0);
+    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(7, 7));  // a real mouse's message: swallowed in window mode
+    pump(hwnd);
+    const bool ok = g_mouse_seen.size() == 4 && g_mouse_seen[0].msg == WM_MOUSEMOVE && g_mouse_seen[0].x == 100 &&
+                    g_mouse_seen[0].y == 200 && g_mouse_seen[1].msg == WM_LBUTTONDOWN &&
+                    (g_mouse_seen[1].wparam & MK_LBUTTON) && g_mouse_seen[1].x == 100 &&
+                    g_mouse_seen[2].msg == WM_LBUTTONUP && !(g_mouse_seen[2].wparam & MK_LBUTTON) &&
+                    g_mouse_seen[3].msg == WM_MOUSEMOVE && g_mouse_seen[3].x == 105 && g_mouse_seen[3].y == 197;
+    std::printf("  window-mode mouse: %zu events seen\n", g_mouse_seen.size());
+    check(ok, "window-mode mouse: move, click and relative move arrive in order; the real mouse's message is swallowed");
+    run(hwnd, 1);
+    g_mouse_seen.clear();
+    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(9, 9));
+    check(g_mouse_seen.size() == 1 && g_mouse_seen[0].x == 9, "window mode off: the real mouse's messages pass again");
+    DestroyWindow(hwnd);
+}
+
 void ui_phase_signature_test(HMODULE proxy) {
     wchar_t exe[MAX_PATH] = {};
     if (!GetEnvironmentVariableW(L"HW2VR_GAME_EXE", exe, MAX_PATH)) {
@@ -613,6 +663,54 @@ void ui_phase_signature_test(HMODULE proxy) {
     const unsigned rva = find ? find(exe) : 0;
     std::printf("  PHASE_UIIn call in %ls: RVA 0x%X (Ghidra 0x%08X)\n", exe, rva, rva + 0x400000);
     check(rva == 0x3161FA, "UI phase hook finds the PHASE_UIIn call (build 12653478: Ghidra 0x007161FA)");
+}
+
+// The game camera turn (engine hook): the camera update and its one call (in the camera wrapper) are found in the
+// real exe; the turn applied to a camera object laid out like the game's turns its view and sky matrices in view
+// space and leaves anything that isn't a rotation alone.
+void camera_turn_test(HMODULE proxy) {
+    using PFNTURN = void (*)(float*, const float*);
+    auto turn_camera = reinterpret_cast<PFNTURN>(GetProcAddress(proxy, "hw2vr_test_turn_camera"));
+    check(turn_camera != nullptr, "proxy exports hw2vr_test_turn_camera");
+    if (turn_camera) {
+        // camera +0x04: world->view (a 90 deg turn about +Y, then a translation), +0x44: its rotation
+        float camera[0x80] = {};
+        const float view[16] = {0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 10, 20, 30, 1};
+        std::memcpy(camera + 1, view, sizeof view);
+        std::memcpy(camera + 0x11, view, sizeof view);
+        camera[0x11 + 12] = camera[0x11 + 13] = camera[0x11 + 14] = 0.0f;
+        // turn: 30 deg to the left (about +Y); the turned view of a point = turn^-1 * view * point
+        const float c = std::cos(0.5235988f), sn = std::sin(0.5235988f);
+        const float turn[16] = {c, 0, -sn, 0, 0, 1, 0, 0, sn, 0, c, 0, 0, 0, 0, 1};
+        turn_camera(camera, turn);
+        // world point (0,0,0) is at view (10,20,30); turned back by 30 deg about +Y: (c*10 - s*30, 20, s*10 + c*30)
+        const float* v = camera + 1;
+        check(std::fabs(v[12] - (c * 10 - sn * 30)) < 1e-3f && std::fabs(v[13] - 20) < 1e-3f &&
+                  std::fabs(v[14] - (sn * 10 + c * 30)) < 1e-3f,
+              "camera turn: the view's translation turns with it (eye position unchanged)");
+        check(std::fabs(camera[0x11 + 0] - (c * view[0] - sn * view[2])) < 1e-4f && std::fabs(camera[0x11 + 12]) < 1e-6f,
+              "camera turn: the sky's rotation turns too and stays rotation-only");
+        float skewed[0x80] = {};
+        std::memcpy(skewed, camera, sizeof skewed);
+        skewed[1] = 2.0f;  // not a rotation
+        float before[0x80];
+        std::memcpy(before, skewed, sizeof before);
+        turn_camera(skewed, turn);
+        check(std::memcmp(before, skewed, sizeof before) == 0, "camera turn: a matrix that isn't a rotation is left alone");
+    }
+
+    wchar_t exe[MAX_PATH] = {};
+    if (!GetEnvironmentVariableW(L"HW2VR_GAME_EXE", exe, MAX_PATH)) {
+        std::printf("  (HW2VR_GAME_EXE not set - camera update signature not checked)\n");
+        return;
+    }
+    using PFNFIND = unsigned (*)(const wchar_t*, int*);
+    auto find = reinterpret_cast<PFNFIND>(GetProcAddress(proxy, "hw2vr_test_find_camera_update"));
+    int calls = 0;
+    const unsigned rva = find ? find(exe, &calls) : 0;
+    std::printf("  camera update in %ls: RVA 0x%X (Ghidra 0x%08X), %d call(s)\n", exe, rva, rva + 0x400000, calls);
+    check(rva == 0x38BF32 && calls == 1,
+          "camera turn hook finds the camera update and its one call (build 12653478: Ghidra 0x0078BF32)");
 }
 
 // --- Second-eye replay ([debug] replay_test_offset_x): record, replay with an offset camera, deferred deletes -------
@@ -833,10 +931,26 @@ int main() {
         depth_probe_test(gl, proxy);
         world_marker_test(gl, dc, proxy);
         ui_phase_signature_test(proxy);
+        window_mouse_test(proxy);
+        camera_turn_test(proxy);
         ui_render_test(proxy);
     }
     if (const float offset = replay_test_offset(); offset != 0.0f) replay_pipeline_test(gl, dc, proxy, offset);
 
+    // Lens flares (bg_lensflare: inMatP and nothing else the proxy tracks) are recognised by their uniforms; light
+    // glows and screen-placed sprites (inMatP + inCen / inWindow / inOfs) are not.
+    {
+        using PFNISFLARE = int (*)(unsigned);
+        auto is_flare = reinterpret_cast<PFNISFLARE>(GetProcAddress(proxy, "hw2vr_test_is_lens_flare"));
+        const GLuint glow =
+            gl.build("uniform vec4 inWindow;\nvoid main() { gl_Position = inMatP * vec4(inPos, 1.0) + inWindow; }\n");
+        gl.get_uniform_location(view_space, "inMatP");
+        gl.get_uniform_location(glow, "inMatP");
+        gl.get_uniform_location(glow, "inWindow");
+        check(is_flare && is_flare(view_space) && !is_flare(glow) && !is_flare(scene_v),
+              "lens flare program recognised by its uniforms (light glows and scene programs aren't)");
+        gl.delete_program(glow);
+    }
     for (GLuint p : {scene_v, scene_c, hud, mv_as_view, view_space, hud_p_only}) gl.delete_program(p);
     wglMakeCurrent(nullptr, nullptr);
     wglDeleteContext(ctx);
