@@ -6,6 +6,7 @@
 # the 32-bit game gets 4 GB of address space - needed for a 2880x2880 VR window. The original exe is kept as
 # HomeworldRM.exe.hw2vr-original and uninstall.ps1 puts it back. A Steam update or file check undoes the patch; the
 # proxy logs whether it is on.
+# Works from a source checkout (installs its build) and from a release package (tools\package.ps1: the DLLs in bin\).
 # Usage: pwsh -File tools\install.ps1 [-GameDir <...\HomeworldRM\Bin\Release>] [-Config RelWithDebInfo|Debug] [-ResetConfig]
 #                                     [-LargeAddressAware]
 param([string]$GameDir, [string]$Config = 'RelWithDebInfo', [switch]$ResetConfig, [switch]$LargeAddressAware)
@@ -13,7 +14,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'GameDir.ps1')
 
 $root = Split-Path $PSScriptRoot
-$build = Join-Path $root "build\win32\$Config"
+$build = Join-Path $root 'bin'
+if (Test-Hw2vrDll (Join-Path $build 'opengl32.dll')) { $Config = 'release package' }
+else { $build = Join-Path $root "build\win32\$Config" }
 $dll = Join-Path $build 'opengl32.dll'
 if (-not (Test-Hw2vrDll $dll)) { throw "No HW2 Frame VR build at $dll - run tools\smoke-test.ps1 (builds + tests) first." }
 if (-not $GameDir) { $GameDir = Find-HwrmBinDir }
@@ -75,4 +78,4 @@ $v = (Get-Item $target).VersionInfo
 Write-Host "Installed $($v.ProductName) $($v.FileVersion) ($Config) to $GameDir"
 Write-Host "  files: $($placed -join ', ')"
 Write-Host '  log:   hw2vr.log next to the DLL (rewritten each launch)'
-Write-Host '  NOTE:  single-player/skirmish mod (no multiplayer guard, by decision).' -ForegroundColor Yellow
+Write-Host '  NOTE:  made for single-player and skirmish.' -ForegroundColor Yellow

@@ -57,6 +57,8 @@ target_compile_definitions(hw2vr_proxy PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNIC
 target_compile_options(hw2vr_proxy PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /permissive- /utf-8 /external:W0>)
 # No incremental-link thunks: exports should point straight at the stubs/hooks (overlays inline-hook them).
 target_link_options(hw2vr_proxy PRIVATE /INCREMENTAL:NO)
+# The DLL names its PDB without the build machine's path (debuggers still find it next to the DLL).
+target_link_options(hw2vr_proxy PRIVATE /PDBALTPATH:opengl32.pdb)
 # Ship the 32-bit OpenVR runtime client next to the proxy (tools/install.ps1 copies both).
 # SteamVR Input actions + default binding (bindings/generate_bindings.py) go in hw2vr_bindings\ next to the proxy.
 file(GLOB HW2VR_BINDINGS ${CMAKE_SOURCE_DIR}/bindings/*.json)

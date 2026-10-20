@@ -1,8 +1,9 @@
 # Python venv for the Ghidra / Cheat Engine MCP bridges
 .venv/
 
-# Build output
+# Build output and release zips (tools/package.ps1)
 build/
+dist/
 out/
 .vs/
 vcpkg_installed/
@@ -20,8 +21,9 @@ re/
 *.dmp
 *.mdmp
 
-# Local Claude Code settings
+# Local Claude Code settings and MCP servers (paths on the RE machine)
 .claude/settings.local.json
+.mcp.json
 
 # Python bytecode
 __pycache__/

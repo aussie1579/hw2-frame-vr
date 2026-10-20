@@ -1,7 +1,8 @@
 # Starts Homeworld 2 Remastered straight into VR: Steam and SteamVR first (if they aren't running), then the game in
 # a square window (each eye gets even pixels per degree) with -hw2vr, so VR starts with it and the menus appear in the
 # headset. The window is taller than the monitor - fine, the laser sends its mouse events straight to the window.
-# Needs the Large Address Aware patch for windows bigger than 3440x1440 (pwsh -File tools\install.ps1 -LargeAddressAware).
+# Needs the Large Address Aware patch for windows bigger than 3440x1440 (Install.cmd, or pwsh -File tools\install.ps1
+# -LargeAddressAware).
 # Usage: pwsh -File tools\launch-vr.ps1 [-Size 2880] [-GameDir <...\HomeworldRM\Bin\Release>] [-Extra '<more game args>']
 param([int]$Size = 2880, [string]$GameDir, [string]$Extra = '')
 $ErrorActionPreference = 'Stop'
@@ -9,9 +10,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $GameDir) { $GameDir = Find-HwrmBinDir }
 Assert-GameNotRunning
 $exe = Join-Path $GameDir 'HomeworldRM.exe'
-if (-not (Test-Hw2vrDll (Join-Path $GameDir 'opengl32.dll'))) { throw 'HW2 Frame VR is not installed - run tools\install.ps1.' }
+if (-not (Test-Hw2vrDll (Join-Path $GameDir 'opengl32.dll'))) { throw 'HW2 Frame VR is not installed - run Install.cmd (or tools\install.ps1).' }
 if ($Size * $Size -gt 3440 * 1440 -and -not (Test-LargeAddressAware $exe)) {
-    throw "A ${Size}x${Size} window needs more than the game's 2 GB of memory - run: pwsh -File tools\install.ps1 -LargeAddressAware"
+    throw "A ${Size}x${Size} window needs more than the game's 2 GB of memory - run Install.cmd and answer Y (or: pwsh -File tools\install.ps1 -LargeAddressAware)"
 }
 
 function Wait-Process([string]$name, [int]$seconds) {
@@ -31,7 +32,7 @@ if (-not (Get-Process vrserver -ErrorAction SilentlyContinue)) {
     if (-not (Wait-Process vrserver 90)) { throw 'SteamVR did not start.' }
     Start-Sleep 5
 }
-# Brendo's HW2 launch line (docs: memory hwrm-target-facts), at the square size, plus -hw2vr. -noMovies: the intro
+# The Remastered launcher's Homeworld 2 command line, at the square size, plus -hw2vr. -noMovies: the intro
 # videos (Gearbox logo first) look like a frozen screen on the panel and invite a press of the system button - which
 # opens SteamVR's dashboard with its desktop view in front of the game.
 $gameArgs = "-forceResolution -w $Size -h $Size -dlccampaign HW2Campaign.big -campaign Ascension -moviepath DataHW2Campaign -noMovies -hw2vr $Extra".Trim()

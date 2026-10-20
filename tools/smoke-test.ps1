@@ -5,7 +5,11 @@ param([string]$Config = 'RelWithDebInfo', [switch]$NoBuild)
 $ErrorActionPreference = 'Stop'
 
 $root  = Split-Path $PSScriptRoot
-$cmake = 'E:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+# The CMake that comes with Visual Studio 2026 (it knows the preset's generator), else one on the PATH.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$vs = if (Test-Path $vswhere) { & $vswhere -latest -prerelease -property installationPath } else { $null }
+$cmake = if ($vs) { Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' } else { $null }
+if (-not $cmake -or -not (Test-Path $cmake)) { $cmake = (Get-Command cmake -ErrorAction Stop).Source }
 $out   = Join-Path $root "build\win32\$Config"
 $ini   = Join-Path $out 'hw2vr.ini'
 
